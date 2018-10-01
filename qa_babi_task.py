@@ -11,6 +11,7 @@ import tarfile
 import re
 import errno
 import random
+import shutil
 from termcolor import colored
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
@@ -117,7 +118,7 @@ def vectorize_stories(data, word_idx, story_maxlen, query_maxlen, attention):
         qs.append(q)
         ys.append(y)
 
-    return xs, qs, ys, x_len, q_len
+    return np.array(xs), np.array(qs), np.array(ys), x_len, q_len
 
 
 def main(model,
@@ -135,7 +136,6 @@ def main(model,
          FFT,
          learning_rate,
          norm,
-         grid_name,
          update_gate,
          activation,
          lambd):
@@ -179,13 +179,6 @@ def main(model,
         vocab |= set(story + q + [answer])
 
     vocab = sorted(vocab)
-
-    # if attention:
-    #     # generates the complements of the vocabulary
-    #     complement_vocabs = {}
-    #     for x in vocab:
-    #         complement_vocabs[x] = list(vocab)
-    #         complement_vocabs[x].remove(x)
 
     # Reserve 0 for masking via pad_sequences
     vocab_size = len(vocab) + 1
@@ -348,44 +341,86 @@ def main(model,
         learning_rate=learning_rate).minimize(cost)
     init = tf.global_variables_initializer()
 
-   # --- save result ----------------------
-    # + "_lambda=" + str(learning_rate) + "_beta=" + str(decay)
-    folder = "./output/babi/" + str(qid) + '/' + model
-    filename = folder + "_h=" + str(n_hidden)
-    filename = filename + "_lr=" + str(learning_rate)
-    filename = filename + "_norm=" + str(norm)
+    # save
+    filename = ("attn" if attention else "") + \
+        model + "_H" + str(n_hidden) + "_" + \
+        ("L" + str(lambd) + "_" if lambd else "") + \
+        ("E" + str(eta) + "_" if norm else "") + \
+        ("A" + activation + "_" if activation else "") + \
+        ("U_" if update_gate else "") + \
+        (str(capacity) if model in ["EUNN", "GORU"] else "") + \
+        ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
+        ("NE" + str(n_embed) + "_") + \
+        "B" + str(n_batch)
+    save_path = os.path.join('train_log', 'babi', 'word', str(qid), filename)
 
-    # --- Training Loop ----------------------
+    if os.path.exists(save_path):
+        print(colored(
+            "Directory exists. Enter a string in [Y, yes, y] to override it.", "red"))
+        inp = raw_input("Enter key here: ")
+        if inp in ["Y", "yes", "y"]:
+            print(colored("OK: overriding...", "red"))
+            shutil.rmtree(save_path)
+        else:
+            print(colored("Invalid key: exiting...", "blue"))
+            exit()
+
+    filepath = os.path.join(save_path, "eval.txt")
+    if not os.path.exists(os.path.dirname(filepath)):
+        try:
+            os.makedirs(os.path.dirname(filepath))
+        except OSError as exc:
+            if exc.errno != errno.EEXIST:
+                raise
+    f = open(filepath, 'w')
+    f.write("validation\n")
+
+    # training loop
     merged_summary = tf.summary.merge_all()
     saver = tf.train.Saver()
 
     step = 0
     with tf.Session(config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=False)) as sess:
 
-        train_writer = tf.summary.FileWriter(
-            os.path.join('train_log', 'babi', 'word', str(qid), model), sess.graph)
-        saver = tf.train.Saver()
+        train_writer = tf.summary.FileWriter(save_path, sess.graph)
         sess.run(init)
 
         steps = []
         losses = []
         accs = []
 
-        # val_dict = {sentence: val_x,
-        #             question: val_q, answer_holder: val_y}
-        # val_dicts = []
-        # val_answers = []
-        # val_cores = []
-        # for i in range(len(val_x)):
-        #     core = val_y[i][:-1]
-        #     answer = val_y[i][-1]
-        #     val_answers.append(answer)
-        #     for j in range(vocab_size):
-        #         val_dicts.append(
-        #             {sentence: val_x, question: val_q, answer_holder: core + [j]})
-        # print(val_answers)
-        # print(colored(len(val_answers), "yellow"))
-        # input()
+        # prepare validation/test dictinary
+        if attention:
+            # validation
+            val_dicts = []
+            val_ground_truths = [val_y[i][-1] for i in range(len(val_y))]
+            val_ground_truths = np.array(val_ground_truths)
+            cores = [val_y[i][:-1] for i in range(len(val_y))]
+            for j in range(vocab_size):
+                val_input = []
+                for i in range(len(val_x)):
+                    val_input.append(list(cores[i]) + [j])
+                val_dicts.append(
+                    {sentence: np.array(val_input), question: val_q, answer_holder: val_y})
+            # test
+            test_dicts = []
+            test_ground_truths = [test_y[i][-1] for i in range(len(test_y))]
+            test_ground_truths = np.array(test_ground_truths)
+            cores = [test_y[i][:-1] for i in range(len(test_y))]
+            for j in range(vocab_size):
+                test_input = []
+                for i in range(len(test_x)):
+                    test_input.append(list(cores[i]) + [j])
+                test_dicts.append(
+                    {sentence: np.array(test_input), question: test_q, answer_holder: test_y})
+
+        else:
+            # validation
+            val_dict = {sentence: val_x,
+                        question: val_q, answer_holder: val_y}
+            # test
+            test_dict = {sentence: test_x,
+                         question: test_q, answer_holder: test_y}
 
         while step < n_iter:
             a = int(step % (n_train / n_batch))
@@ -414,37 +449,66 @@ def main(model,
                 accs.append(acc)
             step += 1
 
-            if step % 200 == 1:
-                val_dicts = []
+            if step % 500 == 1:
+                if not attention:
+                    val_loss, val_acc = sess.run(
+                        [cost, accuracy], feed_dict=val_dict)
+                    print(colored("Validation Loss= " +
+                                  "{:.6f}".format(val_loss) + ", Validation Accuracy= " +
+                                  "{:.5f}".format(val_acc), "green"))
+                    saver.save(sess, save_path)
+                else:
+                    # validation
+                    val_outputs = []
+                    for i in range(len(val_dicts)):
+                        val_similarity = sess.run(
+                            cos_similarity_qx, feed_dict=val_dicts[i])
+                        val_similarity = np.reshape(
+                            val_similarity, (len(val_x), 1))
+                        val_outputs.append(val_similarity)
 
-                val_dict = {sentence: val_x,
-                            question: val_q, answer_holder: val_y}
-                if not attention:
-                    val_acc = sess.run(accuracy, feed_dict=val_dict)
-                val_loss = sess.run(prelim_loss, feed_dict=val_dict)
-                print(val_loss)
-                print(val_loss.shape)
-                raw_input()
-                if not attention:
-                    print("Validation Loss= " +
-                          "{:.6f}".format(val_loss) + ", Validation Accuracy= " +
-                          "{:.5f}".format(val_acc))
+                    val_total = np.concatenate(val_outputs, axis=1)
+                    val_argmax = np.argmax(val_total, axis=1)
+                    val_equals = np.equal(
+                        val_argmax, val_ground_truths, dtype=int)
+                    val_acc = float(np.sum(val_equals)) / len(val_x)
+                    print(colored("Validation Accuracy= " +
+                                  "{:.5f}".format(val_acc), "yellow"))
+                f.write("{:.5f}\n".format(val_acc))
 
         print(colored("Optimization Finished!", 'blue'))
 
-        # --- test ----------------------
-        test_dict = {sentence: test_x, question: test_q, answer_holder: test_y}
-        test_acc = sess.run(accuracy, feed_dict=test_dict)
-        test_loss = sess.run(cost, feed_dict=test_dict)
-        f.write("Test result: Loss= " + "{:.6f}".format(test_loss) +
-                ", Accuracy= " + "{:.5f}".format(test_acc))
-        print("Test result: Loss= " + "{:.6f}".format(test_loss) +
-              ", Accuracy= " + "{:.5f}".format(test_acc))
-
+        # test
+        if not attention:
+            test_dict = {sentence: test_x,
+                         question: test_q, answer_holder: test_y}
+            test_acc = sess.run(accuracy, feed_dict=test_dict)
+            test_loss = sess.run(cost, feed_dict=test_dict)
+            f.write("Test result: Loss= " + "{:.6f}".format(test_loss) +
+                    ", Accuracy= " + "{:.5f}\n".format(test_acc))
+            print(colored("Test result: Loss= " + "{:.6f}".format(test_loss) +
+                          ", Accuracy= " + "{:.5f}".format(test_acc), "green"))
+        else:
+            test_outputs = []
+            for i in range(len(test_dicts)):
+                test_similarity = sess.run(
+                    cos_similarity_qx, feed_dict=test_dicts[i])
+                test_similarity = np.reshape(
+                    test_similarity, (len(val_x), 1))
+                test_outputs.append(test_similarity)
+            test_total = np.concatenate(test_outputs, axis=1)
+            test_argmax = np.argmax(test_total, axis=1)
+            test_equals = np.equal(
+                test_argmax, test_ground_truths, dtype=int)
+            test_acc = float(np.sum(test_equals)) / len(test_x)
+            f.write("test\n")
+            f.write("{:.5f}\n".format(test_acc))
+            print(colored("Accuracy= " + "{:.5f}".format(test_acc), "green"))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="bAbI Task")
+    parser.add_argument('--gpu', help='comma separated list of GPU(s) to use.')
     parser.add_argument("model", default='LSTM',
                         help='Model name: LSTM, EUNN, GRU, GORU')
     parser.add_argument('qid', type=int, default=20, help='Test set')
@@ -471,10 +535,7 @@ if __name__ == "__main__":
     parser.add_argument('--FFT', '-F', type=str, default="True",
                         help='FFT style, default is False')
     parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
-    # parser.add_argument('--decay', '-D', default=0.9, type=str)
     parser.add_argument('--norm', '-norm', default=None, type=float)
-    parser.add_argument('--grid_name', '-GN', default=None,
-                        type=str, help='specify folder to save to')
     parser.add_argument('--update_gate', '-U', default=1,
                         type=bool, help='is there update gate?')
     parser.add_argument('--activation', '-A', default="relu",
@@ -484,6 +545,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     dicts = vars(args)
+
+    if args.gpu:
+        os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
     for i in dicts:
         if (dicts[i] == "False"):
@@ -506,9 +570,7 @@ if __name__ == "__main__":
         'comp': dicts['comp'],
         'FFT': dicts['FFT'],
         'learning_rate': dicts['learning_rate'],
-        # 'decay': dicts['decay'],
         'norm': dicts['norm'],
-        'grid_name': dicts['grid_name'],
         'update_gate': dicts['update_gate'],
         'activation': dicts['activation'],
         'lambd': dicts['lambd']
