@@ -11,8 +11,9 @@ import tarfile
 import re
 import errno
 import random
-import shutil
+
 from termcolor import colored
+from utils import *
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from RUM import RUMCell
@@ -66,7 +67,7 @@ def parse_stories(lines, only_supporting=False):
     return data
 
 
-def get_stories(f, only_supporting=False, max_length=None):
+def get_stories(level, f, only_supporting=False, max_length=None):
     '''Given a file name, read the file, retrieve the stories,
     and then convert the sentences into a single story.
 
@@ -74,150 +75,108 @@ def get_stories(f, only_supporting=False, max_length=None):
     any stories longer than max_length tokens will be discarded.
     '''
     data = parse_stories(f.readlines(), only_supporting=only_supporting)
-    flatten = lambda data: reduce(lambda x, y: x + y, data)
-    data = [(flatten(story), q, answer) for story, q,
-            answer in data if not max_length or len(flatten(story)) < max_length]
+    if level == "word":
+        # word level needs to be more granular
+        flatten = lambda data: reduce(lambda x, y: x + y, data)
+        data = [(flatten(story), q, answer) for story, q,
+                answer in data if not max_length or len(flatten(story)) < max_length]
 
     return data
 
 
-def vectorize_stories(data, word_idx, story_maxlen, query_maxlen, attention):
+def vectorize_stories(data, word_idx, story_maxlen, query_maxlen, attention, level):
+    """ vectorizes the stories.
+        there are two levels to consider: word and sentence.
+    """
     xs = []
     qs = []
     ys = []
-
     x_len = []
     q_len = []
     vocab_length = len(word_idx) + 1
 
+    # for sentence level
+    def one_hot(ind):
+        """ one hot helper function """
+        return np.array([(i == ind) for i in range(vocab_length)], dtype=float)
+
+    # main loop
     for story, query, answer in data:
-        x = [word_idx[w] for w in story]
-        q = [word_idx[w] for w in query]
+        if level == "word":
+            x = [word_idx[w] for w in story]
+            q = [word_idx[w] for w in query]
 
-        len_x = len(x)
-        if len_x < story_maxlen:
-            x = [0] * (story_maxlen - len_x) + x
+            len_x = len(x)
+            if len_x < story_maxlen:
+                x = [0] * (story_maxlen - len_x) + x
 
-        len_q = len(q)
-        q_len.append(len_q)
-        for i in range(len_q, query_maxlen):
-            q.append(0)
+            len_q = len(q)
+            q_len.append(len_q)
+            for i in range(len_q, query_maxlen):
+                q.append(0)
 
-        if not attention:
-            y = word_idx[answer]
+            if not attention:
+                y = word_idx[answer]
+            else:
+                # [experimental] does the scheme that me and Preslav discussed
+                ind = word_idx[answer]
+                y = x + [ind]
+                numbers = range(ind) + range(ind + 1, vocab_length)
+                r = random.choice(numbers)
+                x = x + [r]
+                len_x += 1
+            x_len.append(len_x)
+            xs.append(x)
+            qs.append(q)
+            ys.append(y)
+        elif level == "sentence":
+            len_story = len(story)
+            x = [sum([one_hot(word_idx[w])
+                      for w in sentence]) for sentence in story]
+            len_x = len(x)
+            x_len.append(len_x)
+            for i in range(story_maxlen - len_x):
+                x = [one_hot(0)] + x
+            q = sum([one_hot(word_idx[w]) for w in query])
+            xs.append(x)
+            qs.append([q])
+            ys.append(word_idx[answer])
         else:
-            # does the scheme that me and Preslav discussed
-            ind = word_idx[answer]
-            y = x + [ind]
-            numbers = range(ind) + range(ind + 1, vocab_length)
-            r = random.choice(numbers)
-            x = x + [r]
-            len_x += 1
-        x_len.append(len_x)
-        xs.append(x)
-        qs.append(q)
-        ys.append(y)
+            raise ValueError(
+                "Level must be either 'word' or 'sentence'.")
 
+    if level == "sentence":
+        q_len = None
     return np.array(xs), np.array(qs), np.array(ys), x_len, q_len
 
 
-def main(model,
-         qid,
-         data_path,
-         level,
-         attention,
-         margin,
-         n_iter,
-         n_batch,
-         n_hidden,
-         n_embed,
-         capacity,
-         comp,
-         FFT,
-         learning_rate,
-         norm,
-         update_gate,
-         activation,
-         lambd):
+def attention_dot_product():
+    pass
 
-    # preprocessing
-    learning_rate = float(learning_rate)
-    margin = float(margin)
-    tar = tarfile.open(data_path)
 
-    name_str = [
-        'single-supporting-fact',
-        'two-supporting-facts',
-        'three-supporting-facts',
-        'two-arg-relations',
-        'three-arg-relations',
-        'yes-no-questions',
-        'counting',
-        'lists-sets',
-        'simple-negation',
-        'indefinite-knowledge',
-        'basic-coreference',
-        'conjunction',
-        'compound-coreference',
-        'time-reasoning',
-        'basic-deduction',
-        'basic-induction',
-        'positional-reasoning',
-        'size-reasoning',
-        'path-finding',
-        'agents-motivations',
-    ]
+def attention_cos_sim():
+    pass
 
-    challenge = 'tasks_1-20_v1-2/en-10k/qa' + \
-        str(qid) + '_' + name_str[qid - 1] + '_{}.txt'
 
-    train = get_stories(tar.extractfile(challenge.format('train')))
-    test = get_stories(tar.extractfile(challenge.format('test')))
+def attention_rum():
+    pass
 
-    vocab = set()
-    for story, q, answer in train + test:
-        vocab |= set(story + q + [answer])
 
-    vocab = sorted(vocab)
-
-    # Reserve 0 for masking via pad_sequences
-    vocab_size = len(vocab) + 1
-    word_idx = dict((c, i + 1) for i, c in enumerate(vocab))
-    story_maxlen = max(map(len, (x for x, _, _ in train + test)))
-    query_maxlen = max(map(len, (x for _, x, _ in train + test)))
-
-    train_x, train_q, train_y, train_x_len, train_q_len = vectorize_stories(
-        train, word_idx, story_maxlen, query_maxlen, attention)
-    test_x, test_q, test_y, test_x_len, test_q_len = vectorize_stories(
-        test, word_idx, story_maxlen, query_maxlen, attention)
-    if attention:
-        story_maxlen += 1
-    n_data = len(train_x)
-    n_val = int(0.1 * n_data)
-
-    val_x = train_x[-n_val:]
-    val_q = train_q[-n_val:]
-    val_y = train_y[-n_val:]
-    val_x_len = train_x_len[-n_val:]
-    val_q_len = train_q_len[-n_val:]
-    train_x = train_x[:-n_val]
-    train_q = train_q[:-n_val]
-    train_y = train_y[:-n_val]
-    train_q_len = train_q_len[:-n_val]
-    train_x_len = train_x_len[:-n_val]
-
-    n_train = len(train_x)
-
-    print(colored('vocab = {}'.format(vocab), 'yellow'))
-    print(colored('x.shape = {}'.format(np.array(train_x).shape), 'yellow'))
-    print(colored('xq.shape = {}'.format(np.array(train_q).shape), 'yellow'))
-    print(colored('y.shape = {}'.format(np.array(train_y).shape), 'yellow'))
-    print(colored('story_maxlen, query_maxlen = {}, {}'.format(
-        story_maxlen, query_maxlen), 'yellow'))
-
-    print(colored("building model", "blue"))
+def word_model(cell,
+               n_hidden,
+               n_embed,
+               attention,
+               margin,
+               vocab_size,
+               story_maxlen,
+               query_maxlen
+               ):
+    """ defining the NN core for the word level.
+        this code is deprecated (needs further resarch).
+    """
 
     # model
+    margin = float(margin)
     sentence = tf.placeholder("int32", [None, story_maxlen])
     question = tf.placeholder("int32", [None, query_maxlen])
     if not attention:
@@ -231,7 +190,8 @@ def main(model,
 
     with tf.variable_scope("embedding"):
         embed_init_val = np.sqrt(6.) / np.sqrt(vocab_size)
-        embed = tf.get_variable("embedding", [vocab_size, n_embed], initializer=tf.random_normal_initializer(
+        embed = tf.get_variable("embedding", [vocab_size, n_embed],
+                                initializer=tf.random_normal_initializer(
             -embed_init_val, embed_init_val), dtype=tf.float32)
         encoded_story = tf.nn.embedding_lookup(embed, sentence)
         encoded_question = tf.nn.embedding_lookup(embed, question)
@@ -240,30 +200,6 @@ def main(model,
     else:
         merged = tf.concat([encoded_story, encoded_question], axis=1)
 
-    # defined the rnn cell
-    if model == "LSTM":
-        cell = BasicLSTMCell(n_hidden, state_is_tuple=True, forget_bias=1)
-    elif model == "GRU":
-        cell = GRUCell(n_hidden)
-    elif model == "RUM":
-        if activation == "relu":
-            act = tf.nn.relu
-        elif activation == "sigmoid":
-            act = tf.nn.sigmoid
-        elif activation == "tanh":
-            act = tf.nn.tanh
-        elif activation == "softsign":
-            act = tf.nn.softsign
-        cell = RUMCell(n_hidden,
-                       eta_=norm,
-                       update_gate=update_gate,
-                       lambda_=lambd,
-                       activation=act)
-    elif model == "EUNN":
-        cell = EUNNCell(n_hidden, capacity, FFT, comp, name="eunn")
-    elif model == "GORU":
-        cell = GORUCell(n_hidden, capacity, FFT)
-
     if not attention:
         merged, _ = tf.nn.dynamic_rnn(cell, merged, dtype=tf.float32)
         print("merged:", colored(merged, 'green'))
@@ -271,10 +207,10 @@ def main(model,
         with tf.variable_scope("hidden_to_output"):
             V_init_val = np.sqrt(6.) / np.sqrt(n_output + n_input)
             V_weights = tf.get_variable("V_weights", shape=[
-                                        n_hidden, n_classes], dtype=tf.float32,
-                                        initializer=tf.random_uniform_initializer(-V_init_val, V_init_val))
+                n_hidden, n_classes], dtype=tf.float32,
+                initializer=tf.random_uniform_initializer(-V_init_val, V_init_val))
             V_bias = tf.get_variable("V_bias", shape=[
-                                     n_classes], dtype=tf.float32, initializer=tf.constant_initializer(0.01))
+                n_classes], dtype=tf.float32, initializer=tf.constant_initializer(0.01))
 
             merged_list = tf.unstack(merged, axis=1)[-1]
             temp_out = tf.matmul(merged_list, V_weights)
@@ -300,7 +236,8 @@ def main(model,
             W_attn = tf.get_variable("W_attention", shape=[
                                      n_hidden, n_hidden], dtype=tf.float32)
             b_attn = tf.get_variable("b_attention", shape=[
-                                     n_hidden], dtype=tf.float32, initializer=tf.constant_initializer(0.01))
+                                     n_hidden], dtype=tf.float32,
+                                     initializer=tf.constant_initializer(0.01))
             output_q_p = tf.reshape(output_q, [-1, n_hidden])
             output_x_p = tf.reshape(output_x, [-1, n_hidden])
             output_a_p = tf.reshape(output_a, [-1, n_hidden])
@@ -332,10 +269,266 @@ def main(model,
             prelim_loss = tf.nn.relu(
                 margin - cos_similarity_qa + cos_similarity_qx)
             cost = tf.reduce_mean(prelim_loss)
+    if attention:
+        accuracy = None
+    return cost, accuracy, sentence, question, answer_holder, cos_similarity_qx
+
+
+def sentence_model(cell,
+                   n_hidden,
+                   n_embed,
+                   attention,
+                   vocab_size,
+                   story_maxlen):
+    """ defining the NN core for the sentence level.
+        this code is deprecated (needs further resarch).
+    """
+    n_output = n_hidden
+    n_input = n_embed
+    n_classes = vocab_size
+
+    with tf.variable_scope("embedding"):
+        input_story = tf.placeholder(
+            "float32", [None, story_maxlen, vocab_size])
+        embed_init_val = np.sqrt(6.) / np.sqrt(vocab_size)
+        embed_story = tf.get_variable('embed_story', [vocab_size, n_embed],
+                                      initializer=tf.random_normal_initializer(
+            -embed_init_val, embed_init_val), dtype=tf.float32)
+
+        tmp_inp = tf.reshape(input_story, [-1, vocab_size])
+        tmp_inp = tf.matmul(tmp_inp, embed_story)
+        encoded_story = tf.reshape(tmp_inp, [-1, story_maxlen, n_embed])
+
+        question = tf.placeholder("float32", [None, 1, vocab_size])
+
+        n_embed_query = n_embed if not attention else n_hidden
+        embed_query = tf.get_variable('embed_query', [vocab_size, n_embed_query],
+                                      initializer=tf.random_normal_initializer(
+            -embed_init_val, embed_init_val), dtype=tf.float32)
+        tmp_q = tf.reshape(question, [-1, vocab_size])
+        tmp_q = tf.matmul(tmp_q, embed_query)
+        encoded_question = tf.reshape(tmp_q, [-1, 1, n_embed_query])
+
+        if not attention:
+            rnn_input = tf.concat([encoded_story, encoded_question], axis=1)
+        else:
+            rnn_input = encoded_story
+
+    # unrolls the rnn
+    rnn_outputs, _ = tf.nn.dynamic_rnn(
+        cell, rnn_input, dtype=tf.float32)
+
+    # gets the output vector
+    if not attention:
+        final_h = rnn_outputs[:, -1, :]
+        n_hidden_output = n_hidden
+    else:
+        # attention mechanism
+        with tf.variable_scope("attention"):
+            enc_q_tr = tf.transpose(encoded_question, [0, 2, 1])
+            energy = tf.matmul(rnn_outputs, enc_q_tr)
+            alphas = tf.nn.softmax(energy, axis=1)
+            weighted_outputs = alphas * rnn_outputs
+            context = tf.reduce_sum(weighted_outputs, axis=1)
+            context = tf.reshape(context, [-1, n_hidden])
+            final_h = tf.concat([context, tf.reshape(
+                encoded_question, [-1, n_hidden])], axis=1)
+            n_hidden_output = 2 * n_hidden
+
+    # hidden layer to output
+    V_init_val = np.sqrt(6.) / np.sqrt(n_hidden_output + n_input)
+    V_weights = tf.get_variable("V_weights", shape=[
+        n_hidden_output, n_classes], dtype=tf.float32,
+        initializer=tf.random_uniform_initializer(-V_init_val, V_init_val))
+    V_bias = tf.get_variable("V_bias", shape=[
+        n_classes], dtype=tf.float32, initializer=tf.constant_initializer(0.01))
+
+    temp_out = tf.matmul(final_h, V_weights)
+    final_out = tf.nn.bias_add(temp_out, V_bias)
+    answer_holder = tf.placeholder("int64", [None])
+
+    # evaluate process
+    cost = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+        logits=final_out, labels=answer_holder))
+    tf.summary.scalar('cost', cost)
+    correct_pred = tf.equal(tf.argmax(final_out, 1), answer_holder)
+    accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+    tf.summary.scalar('accuracy', accuracy)
+
+    return cost, accuracy, input_story, question, answer_holder
+
+
+def nn_model(cell,
+             level,
+             attention,
+             margin,
+             n_hidden,
+             n_embed,
+             vocab_size,
+             story_maxlen,
+             query_maxlen):
+    """ constructs the core NN model """
+
+    if level == "word":
+        cost, accuracy, input_story, question, \
+            answer_holder, cos_similarity_qx = word_model(cell, n_hidden, n_embed, attention, margin,
+                                                          vocab_size, story_maxlen, query_maxlen)
+    elif level == "sentence":
+        cost, accuracy, input_story, question, \
+            answer_holder = sentence_model(cell, n_hidden, n_embed, attention,
+                                           vocab_size, story_maxlen)
+        cos_similarity_qx = None
+    else:
+        raise
+    return cost, accuracy, input_story, question, answer_holder, cos_similarity_qx
+
+
+def main(model,
+         qid,
+         data_path,
+         level,
+         attention,
+         margin,
+         n_iter,
+         n_batch,
+         n_hidden,
+         n_embed,
+         capacity,
+         comp,
+         FFT,
+         learning_rate,
+         norm,
+         update_gate,
+         activation,
+         lambd):
+    """ assembles the model, trains and then evaluates. """
+
+    # preprocessing
+    learning_rate = float(learning_rate)
+    tar = tarfile.open(data_path)
+    name_str = [
+        'single-supporting-fact',
+        'two-supporting-facts',
+        'three-supporting-facts',
+        'two-arg-relations',
+        'three-arg-relations',
+        'yes-no-questions',
+        'counting',
+        'lists-sets',
+        'simple-negation',
+        'indefinite-knowledge',
+        'basic-coreference',
+        'conjunction',
+        'compound-coreference',
+        'time-reasoning',
+        'basic-deduction',
+        'basic-induction',
+        'positional-reasoning',
+        'size-reasoning',
+        'path-finding',
+        'agents-motivations',
+    ]
+    challenge = 'tasks_1-20_v1-2/en-10k/qa' + \
+        str(qid) + '_' + name_str[qid - 1] + '_{}.txt'
+    train = get_stories(level, tar.extractfile(challenge.format('train')))
+    test = get_stories(level, tar.extractfile(challenge.format('test')))
+
+    # gets vocabulary
+    vocab = set()
+    for story, q, answer in train + test:
+        if level == "word":
+            vocab |= set(story + q + [answer])
+        elif level == "sentence":
+            vocab |= set(
+                [item for sublist in story for item in sublist] + q + [answer])
+        else:
+            raise
+    vocab = sorted(vocab)
+
+    # Reserve 0 for masking via pad_sequences
+    vocab_size = len(vocab) + 1
+    word_idx = dict((c, i + 1) for i, c in enumerate(vocab))
+
+    story_maxlen = max(map(len, (x for x, _, _ in train + test)))
+    query_maxlen = max(map(len, (x for _, x, _ in train + test))
+                       ) if level == "word" else None
+
+    train_x, train_q, train_y, train_x_len, train_q_len = vectorize_stories(
+        train, word_idx, story_maxlen, query_maxlen, attention, level)
+    test_x, test_q, test_y, test_x_len, test_q_len = vectorize_stories(
+        test, word_idx, story_maxlen, query_maxlen, attention, level)
+    # notes: query_maxlen will be `None` if `level == sentence`;
+    # moreover we added the `attention` and `level` arguments.
+
+    if attention and level == "word":
+        story_maxlen += 1
+    # number of data points
+    n_data = len(train_x)
+    n_val = int(0.1 * n_data)
+    # val data
+    val_x = train_x[-n_val:]
+    val_q = train_q[-n_val:]
+    val_y = train_y[-n_val:]
+    val_x_len = train_x_len[-n_val:]
+    val_q_len = train_q_len[-n_val:] if level == "word" else None
+    # train data
+    train_x = train_x[:-n_val]
+    train_q = train_q[:-n_val]
+    train_y = train_y[:-n_val]
+    train_q_len = train_q_len[:-n_val] if level == "word" else None
+    train_x_len = train_x_len[:-n_val]
+    n_train = len(train_x)
+
+    # profiler printing
+    print(colored('level: ' + level, 'yellow'))
+    print(colored('attention: ' + str(attention), 'yellow'))
+    print(colored('qid: ' + str(qid), 'yellow'))
+    print(colored('vocab = {}'.format(vocab), 'yellow'))
+    print(colored('x.shape = {}'.format(np.array(train_x).shape), 'yellow'))
+    print(colored('xq.shape = {}'.format(np.array(train_q).shape), 'yellow'))
+    print(colored('y.shape = {}'.format(np.array(train_y).shape), 'yellow'))
+    print(colored('story_maxlen, query_maxlen = {}, {}'.format(
+        story_maxlen, query_maxlen), 'yellow'))
+    print(colored("building model", "blue"))
+
+    # defines the rnn cell
+    if model == "LSTM":
+        cell = BasicLSTMCell(n_hidden, state_is_tuple=True, forget_bias=1)
+    elif model == "GRU":
+        cell = GRUCell(n_hidden)
+    elif model == "RUM":
+        if activation == "relu":
+            act = tf.nn.relu
+        elif activation == "sigmoid":
+            act = tf.nn.sigmoid
+        elif activation == "tanh":
+            act = tf.nn.tanh
+        elif activation == "softsign":
+            act = tf.nn.softsign
+        cell = RUMCell(n_hidden,
+                       eta_=norm,
+                       update_gate=update_gate,
+                       lambda_=lambd,
+                       activation=act)
+    elif model == "EUNN":
+        cell = EUNNCell(n_hidden, capacity, FFT, comp, name="eunn")
+    elif model == "GORU":
+        cell = GORUCell(n_hidden, capacity, FFT)
+
+    cost, accuracy, input_story, question, \
+        answer_holder, cos_similarity_qx = nn_model(cell,
+                                                    level,
+                                                    attention,
+                                                    margin,
+                                                    n_hidden,
+                                                    n_embed,
+                                                    vocab_size,
+                                                    story_maxlen,
+                                                    query_maxlen)
 
     # initialization
     tf.summary.scalar('cost', cost)
-    if not attention:
+    if not (level == "word" and attention):
         tf.summary.scalar('accuracy', accuracy)
     optimizer = tf.train.AdamOptimizer(
         learning_rate=learning_rate).minimize(cost)
@@ -352,19 +545,11 @@ def main(model,
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
         ("NE" + str(n_embed) + "_") + \
         "B" + str(n_batch)
-    save_path = os.path.join('train_log', 'babi', 'word', str(qid), filename)
+    save_path = os.path.join('train_log', 'babi', level, str(qid), filename)
 
-    if os.path.exists(save_path):
-        print(colored(
-            "Directory exists. Enter a string in [Y, yes, y] to override it.", "red"))
-        inp = raw_input("Enter key here: ")
-        if inp in ["Y", "yes", "y"]:
-            print(colored("OK: overriding...", "red"))
-            shutil.rmtree(save_path)
-        else:
-            print(colored("Invalid key: exiting...", "blue"))
-            exit()
+    file_manager(save_path)
 
+    # what follows is task specific
     filepath = os.path.join(save_path, "eval.txt")
     if not os.path.exists(os.path.dirname(filepath)):
         try:
@@ -375,13 +560,22 @@ def main(model,
     f = open(filepath, 'w')
     f.write("validation\n")
 
+    log(kwargs, save_path)
+
     # training loop
     merged_summary = tf.summary.merge_all()
     saver = tf.train.Saver()
+    parameters_profiler()
+
+    # early stop
+    ultimate_accuracy = 0.
+    ultimate_steps = 0  # if 5 steps with no improvement, we should stop training
 
     step = 0
-    with tf.Session(config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=False)) as sess:
+    with tf.Session(config=tf.ConfigProto(log_device_placement=False,
+                                          allow_soft_placement=False)) as sess:
 
+        print(col("saving summary data in " + save_path, "b"))
         train_writer = tf.summary.FileWriter(save_path, sess.graph)
         sess.run(init)
 
@@ -390,7 +584,7 @@ def main(model,
         accs = []
 
         # prepare validation/test dictinary
-        if attention:
+        if level == "word" and attention:
             # validation
             val_dicts = []
             val_ground_truths = [val_y[i][-1] for i in range(len(val_y))]
@@ -401,7 +595,7 @@ def main(model,
                 for i in range(len(val_x)):
                     val_input.append(list(cores[i]) + [j])
                 val_dicts.append(
-                    {sentence: np.array(val_input), question: val_q, answer_holder: val_y})
+                    {input_story: np.array(val_input), question: val_q, answer_holder: val_y})
             # test
             test_dicts = []
             test_ground_truths = [test_y[i][-1] for i in range(len(test_y))]
@@ -412,51 +606,64 @@ def main(model,
                 for i in range(len(test_x)):
                     test_input.append(list(cores[i]) + [j])
                 test_dicts.append(
-                    {sentence: np.array(test_input), question: test_q, answer_holder: test_y})
+                    {input_story: np.array(test_input), question: test_q, answer_holder: test_y})
 
         else:
             # validation
-            val_dict = {sentence: val_x,
+            val_dict = {input_story: val_x,
                         question: val_q, answer_holder: val_y}
             # test
-            test_dict = {sentence: test_x,
+            test_dict = {input_story: test_x,
                          question: test_q, answer_holder: test_y}
 
-        while step < n_iter:
+        # the factor of 10 is tentative [experimental]
+        while step < 10 * n_iter:
             a = int(step % (n_train / n_batch))
             batch_x = train_x[a * n_batch: (a + 1) * n_batch]
             batch_q = train_q[a * n_batch: (a + 1) * n_batch]
             batch_y = train_y[a * n_batch: (a + 1) * n_batch]
 
-            train_dict = {sentence: batch_x,
+            train_dict = {input_story: batch_x,
                           question: batch_q, answer_holder: batch_y}
             summ, loss = sess.run(
                 [merged_summary, cost], feed_dict=train_dict)
             train_writer.add_summary(summ, step)
             sess.run(optimizer, feed_dict=train_dict)
 
-            if not attention:
+            if not (level == "word" and attention):
                 acc = sess.run(accuracy, feed_dict=train_dict)
-                print(colored("Iter " + str(step) + ", Minibatch Loss= " +
-                              "{:.6f}".format(loss) + ", Training Accuracy= " +
-                              "{:.5f}".format(acc), 'green'))
+                if step % 100 == 0:
+                    print(colored("Iter " + str(step) + ", Minibatch Loss= " +
+                                  "{:.6f}".format(loss) + ", Training Accuracy= " +
+                                  "{:.5f}".format(acc), 'green'))
             else:
-                print(colored("Iter " + str(step) + ", Minibatch Loss= " +
-                              "{:.6f}".format(loss), 'green'))
+                if step % 100 == 0:
+                    print(colored("Iter " + str(step) + ", Minibatch Loss= " +
+                                  "{:.6f}".format(loss), 'green'))
             steps.append(step)
             losses.append(loss)
-            if not attention:
+            if not (level == "word" and attention):
                 accs.append(acc)
             step += 1
 
             if step % 500 == 1:
-                if not attention:
+                if not (level == "word" and attention):
                     val_loss, val_acc = sess.run(
                         [cost, accuracy], feed_dict=val_dict)
                     print(colored("Validation Loss= " +
                                   "{:.6f}".format(val_loss) + ", Validation Accuracy= " +
                                   "{:.5f}".format(val_acc), "green"))
-                    saver.save(sess, save_path)
+                    if val_acc > ultimate_accuracy:
+                        ultimate_accuracy = val_acc
+                        print(col("saving graph and metadata in " + save_path, "b"))
+                        saver.save(sess, os.path.join(save_path, "model"))
+                        ultimate_steps = 0
+                    else:
+                        ultimate_steps += 1
+                    if ultimate_steps == 5:
+                        print(col("Early stop!", 'r'))
+                        break
+                    print(col((ultimate_accuracy, ultimate_steps), 'r'))
                 else:
                     # validation
                     val_outputs = []
@@ -479,11 +686,12 @@ def main(model,
         print(colored("Optimization Finished!", 'blue'))
 
         # test
-        if not attention:
-            test_dict = {sentence: test_x,
-                         question: test_q, answer_holder: test_y}
-            test_acc = sess.run(accuracy, feed_dict=test_dict)
-            test_loss = sess.run(cost, feed_dict=test_dict)
+        saver.restore(sess, save_path)
+        print(col("restored the best model on the validation data", "b"))
+
+        if not (level == "word" and attention):
+            test_acc, test_loss = sess.run(
+                [accuracy, cost], feed_dict=test_dict)
             f.write("Test result: Loss= " + "{:.6f}".format(test_loss) +
                     ", Accuracy= " + "{:.5f}\n".format(test_acc))
             print(colored("Test result: Loss= " + "{:.6f}".format(test_loss) +
@@ -521,7 +729,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_iter', '-I', type=int,
                         default=10000, help='training iteration number')
     parser.add_argument(
-        '--data_path', default="../RUM-TF-2/data/tasks_1-20_v1-2.tar.gz", type=str)
+        '--data_path', default="./data/babi/tasks_1-20_v1-2.tar", type=str)
     parser.add_argument('--n_batch', '-B', type=int,
                         default=32, help='batch size')
     parser.add_argument('--n_hidden', '-H', type=int,
