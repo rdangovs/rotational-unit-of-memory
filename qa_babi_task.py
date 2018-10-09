@@ -16,7 +16,7 @@ from termcolor import colored
 from utils import *
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
-from RUM import RUMCell
+from RUM import RUMCell, rotation_operator, rotate
 from baselineModels.GORU import GORUCell
 from baselineModels.EUNN import EUNNCell
 
@@ -150,16 +150,41 @@ def vectorize_stories(data, word_idx, story_maxlen, query_maxlen, attention, lev
     return np.array(xs), np.array(qs), np.array(ys), x_len, q_len
 
 
-def attention_dot_product():
-    pass
+def attention_sentence(attn_type,
+                       rum_attn,
+                       rnn_outputs,
+                       encoded_question,
+                       n_hidden,
+                       eps=1e-12):
+    """ the attention mechansim for the 'sentence' level """
+    with tf.variable_scope("attention"):
+        if rum_attn:
+            last_hidden_state = rnn_outputs[:, -1, :]
 
+        if attn_type == "cosine":
+            encoded_question_unit = tf.nn.l2_normalize(
+                encoded_question, 2, epsilon=eps)
+            rnn_outputs_unit = tf.nn.l2_normalize(rnn_outputs, 2, epsilon=eps)
 
-def attention_cos_sim():
-    pass
+        # get the energy
+        enc_q_tr = tf.transpose(
+            encoded_question_unit if attn_type == "cosine" else encoded_question, [0, 2, 1])
+        energy = tf.matmul(rnn_outputs_unit if attn_type ==
+                           "cosine" else rnn_outputs, enc_q_tr)
+        alphas = tf.nn.softmax(energy, axis=1)
 
+        weighted_outputs = alphas * rnn_outputs
+        context = tf.reduce_sum(weighted_outputs, axis=1)
 
-def attention_rum():
-    pass
+        if rum_attn:
+            final_h, _ = rotate(context, tf.reshape(
+                encoded_question, [-1, n_hidden]), last_hidden_state)
+            n_hidden_output = n_hidden
+        else:
+            final_h = tf.concat([context, tf.reshape(
+                encoded_question, [-1, n_hidden])], axis=1)
+            n_hidden_output = 2 * n_hidden
+    return final_h, n_hidden_output
 
 
 def word_model(cell,
@@ -278,6 +303,8 @@ def sentence_model(cell,
                    n_hidden,
                    n_embed,
                    attention,
+                   attn_type,
+                   rum_attn,
                    vocab_size,
                    story_maxlen):
     """ defining the NN core for the sentence level.
@@ -324,16 +351,8 @@ def sentence_model(cell,
         n_hidden_output = n_hidden
     else:
         # attention mechanism
-        with tf.variable_scope("attention"):
-            enc_q_tr = tf.transpose(encoded_question, [0, 2, 1])
-            energy = tf.matmul(rnn_outputs, enc_q_tr)
-            alphas = tf.nn.softmax(energy, axis=1)
-            weighted_outputs = alphas * rnn_outputs
-            context = tf.reduce_sum(weighted_outputs, axis=1)
-            context = tf.reshape(context, [-1, n_hidden])
-            final_h = tf.concat([context, tf.reshape(
-                encoded_question, [-1, n_hidden])], axis=1)
-            n_hidden_output = 2 * n_hidden
+        final_h, n_hidden_output = attention_sentence(
+            attn_type, rum_attn, rnn_outputs, encoded_question, n_hidden)
 
     # hidden layer to output
     V_init_val = np.sqrt(6.) / np.sqrt(n_hidden_output + n_input)
@@ -361,6 +380,8 @@ def sentence_model(cell,
 def nn_model(cell,
              level,
              attention,
+             attn_type,
+             rum_attn,
              margin,
              n_hidden,
              n_embed,
@@ -375,7 +396,7 @@ def nn_model(cell,
                                                           vocab_size, story_maxlen, query_maxlen)
     elif level == "sentence":
         cost, accuracy, input_story, question, \
-            answer_holder = sentence_model(cell, n_hidden, n_embed, attention,
+            answer_holder = sentence_model(cell, n_hidden, n_embed, attention, attn_type, rum_attn,
                                            vocab_size, story_maxlen)
         cos_similarity_qx = None
     else:
@@ -400,7 +421,9 @@ def main(model,
          norm,
          update_gate,
          activation,
-         lambd):
+         lambd,
+         attn_type,
+         rum_attn):
     """ assembles the model, trains and then evaluates. """
 
     # preprocessing
@@ -519,6 +542,8 @@ def main(model,
         answer_holder, cos_similarity_qx = nn_model(cell,
                                                     level,
                                                     attention,
+                                                    attn_type,
+                                                    rum_attn,
                                                     margin,
                                                     n_hidden,
                                                     n_embed,
@@ -539,11 +564,13 @@ def main(model,
         model + "_H" + str(n_hidden) + "_" + \
         ("L" + str(lambd) + "_" if lambd else "") + \
         ("E" + str(eta) + "_" if norm else "") + \
-        ("A" + activation + "_" if activation else "") + \
+        ("A" + activation + "_" if (model == "RUM" and activation) else "") + \
         ("U_" if update_gate else "") + \
         (str(capacity) if model in ["EUNN", "GORU"] else "") + \
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
         ("NE" + str(n_embed) + "_") + \
+        ("AT" + str(attn_type) + "_" if level == "sentence" and attention else "") + \
+        ("RA" + str(attn_type) + "_" if (level == "sentence" and attention and model == "RUM") else "") + \
         "B" + str(n_batch)
     save_path = os.path.join('train_log', 'babi', level, str(qid), filename)
 
@@ -568,7 +595,7 @@ def main(model,
     parameters_profiler()
 
     # early stop
-    ultimate_accuracy = 0.
+    ultimate_accuracy = -1.0
     ultimate_steps = 0  # if 5 steps with no improvement, we should stop training
 
     step = 0
@@ -660,7 +687,7 @@ def main(model,
                         ultimate_steps = 0
                     else:
                         ultimate_steps += 1
-                    if ultimate_steps == 5:
+                    if ultimate_steps == 10:
                         print(col("Early stop!", 'r'))
                         break
                     print(col((ultimate_accuracy, ultimate_steps), 'r'))
@@ -686,7 +713,8 @@ def main(model,
         print(colored("Optimization Finished!", 'blue'))
 
         # test
-        saver.restore(sess, save_path)
+        print(col("restoring from " + save_path + "/model", "b"))
+        saver.restore(sess, save_path + "/model")
         print(col("restored the best model on the validation data", "b"))
 
         if not (level == "word" and attention):
@@ -743,13 +771,17 @@ if __name__ == "__main__":
     parser.add_argument('--FFT', '-F', type=str, default="True",
                         help='FFT style, default is False')
     parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
-    parser.add_argument('--norm', '-norm', default=None, type=float)
+    parser.add_argument('--norm', '-N', default=None, type=float)
     parser.add_argument('--update_gate', '-U', default=1,
                         type=bool, help='is there update gate?')
     parser.add_argument('--activation', '-A', default="relu",
                         type=str, help='specify activation')
     parser.add_argument('--lambd', '-LA', default=0,
                         type=int, help='lambda for RUM model')
+    parser.add_argument('--attn_type', '-AT', default="standard",
+                        type=str, help="[for sentence level only], one of the possible choices: 'standard, cosine, rum'")
+    parser.add_argument('--rum_attn', '-RA', default=0,
+                        type=bool, help="whether to do the RUM-type attention")
 
     args = parser.parse_args()
     dicts = vars(args)
@@ -781,7 +813,9 @@ if __name__ == "__main__":
         'norm': dicts['norm'],
         'update_gate': dicts['update_gate'],
         'activation': dicts['activation'],
-        'lambd': dicts['lambd']
+        'lambd': dicts['lambd'],
+        'attn_type': dicts['attn_type'],
+        'rum_attn': dicts['rum_attn']
     }
 
     main(**kwargs)

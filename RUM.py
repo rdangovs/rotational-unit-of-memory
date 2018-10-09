@@ -7,7 +7,7 @@ from tensorflow.python.ops.rnn_cell_impl import RNNCell
 from tensorflow.contrib.layers import fully_connected
 
 
-def rotation_components(x, y, eps=1e-12):
+def rotation_components(x, y, eps=1e-12, costh=None):
     """Components for the operator Rotation(x,y)
        Together with `rotation_operator` achieves best memory complexity: O(N_batch * N_hidden)
 
@@ -24,7 +24,8 @@ def rotation_components(x, y, eps=1e-12):
 
     # construct the 2x2 rotation
     u = tf.nn.l2_normalize(x, 1, epsilon=eps)
-    costh = tf.reduce_sum(u * tf.nn.l2_normalize(y, 1, epsilon=eps), 1)
+    if costh == None:
+        costh = tf.reduce_sum(u * tf.nn.l2_normalize(y, 1, epsilon=eps), 1)
     sinth = tf.sqrt(1 - costh ** 2)
     step1 = tf.reshape(costh, [size_batch, 1])
     step2 = tf.reshape(sinth, [size_batch, 1])
@@ -68,7 +69,7 @@ def rotation_operator(x, y, hidden_size, eps=1e-12):
             tf.matmul(tf.matmul(tf.transpose(step3, [0, 2, 1]), Rth), step3)), costh
 
 
-def rotate(v1, v2, v):
+def rotate(v1, v2, v, costh=None):
     """Rotates v via the rotation R(v1,v2)
 
     Args: 
@@ -83,7 +84,7 @@ def rotate(v1, v2, v):
     size_batch = tf.shape(v1)[0]
     hidden_size = tf.shape(v1)[1]
 
-    U = rotation_components(v1, v2)
+    U = rotation_components(v1, v2, costh=costh)
     h = tf.reshape(v, [size_batch, hidden_size, 1])
 
     return (v + tf.reshape(
