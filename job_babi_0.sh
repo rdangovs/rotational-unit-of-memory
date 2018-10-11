@@ -1,109 +1,11 @@
-python qa_babi_task.py RUM 1 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 2 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 3 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 4 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 5 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 6 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 7 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 8 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 9 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 10 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 11 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 12 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 13 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 14 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 15 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 16 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 17 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 18 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 19 sentence False -H=100 --gpu=0
-python qa_babi_task.py RUM 20 sentence False -H=100 --gpu=0
+python qa_babi_task.py LSTM -1 sentence False --gpu=0 -H=90 --single_pass=1
+python qa_babi_task.py LSTM -1 sentence True --gpu=0 -H=90 --single_pass=1
 
-python qa_babi_task.py LSTM 1 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 2 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 3 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 4 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 5 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 6 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 7 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 8 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 9 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 10 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 11 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 12 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 13 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 14 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 15 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 16 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 17 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 18 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 19 sentence False -H=90 --gpu=0
-python qa_babi_task.py LSTM 20 sentence False -H=90 --gpu=0
+python qa_babi_task.py GRU -1 sentence False --gpu=0 -H=100 --single_pass=1
+python qa_babi_task.py GRU -1 sentence True --gpu=0 -H=100 --single_pass=1
 
-python qa_babi_task.py LSTM 1 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 2 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 3 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 4 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 5 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 6 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 7 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 8 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 9 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 10 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 11 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 12 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 13 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 14 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 15 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 16 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 17 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 18 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 19 sentence True -H=90 --gpu=0
-python qa_babi_task.py LSTM 20 sentence True -H=90 --gpu=0
-
-python qa_babi_task.py EUNN 1 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 2 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 3 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 4 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 5 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 6 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 7 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 8 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 9 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 10 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 11 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 12 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 13 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 14 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 15 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 16 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 17 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 18 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 19 sentence False -H=512 --gpu=0
-python qa_babi_task.py EUNN 20 sentence False -H=512 --gpu=0
-
-python qa_babi_task.py EUNN 1 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 2 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 3 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 4 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 5 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 6 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 7 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 8 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 9 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 10 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 11 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 12 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 13 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 14 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 15 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 16 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 17 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 18 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 19 sentence True -H=512 --gpu=0
-python qa_babi_task.py EUNN 20 sentence True -H=512 --gpu=0
-
-
-
-
+python qa_babi_task.py RUM -1 sentence True --gpu=0 -H=100 --single_pass=1 -LA=1
+python qa_babi_task.py RUM -1 sentence True --gpu=0 -H=100 --single_pass=1 --N=1.0 -LA=1
+python qa_babi_task.py RUM -1 sentence True --gpu=0 -H=100 --single_pass=1 --A=tanh -LA=1
+python qa_babi_task.py RUM -1 sentence True --gpu=0 -H=100 --single_pass=1 --LN=True -LA=1
 

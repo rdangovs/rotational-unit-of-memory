@@ -204,21 +204,8 @@ def attention_sentence(rnn_outputs,
     """ the attention mechansim for the 'sentence' level """
 
     with tf.variable_scope("attention"):
-        # get the energy
         hidden_question = rnn_outputs[:, -1, :]
         rnn_out = rnn_outputs[:, :-1, :]
-
-        print("rnn_out: ", rnn_out)
-        print("hidden_question: ", hidden_question)
-
-        # init_val = np.sqrt(6.) / np.sqrt(n_hidden)
-        # attn_weights = tf.get_variable('embed', [n_hidden, n_embed],
-        #                                initializer=tf.random_normal_initializer(
-        #     -init_val, init_val), dtype=tf.float32)
-        # rnn_out = tf.reshape(rnn_out, [-1, n_hidden])
-        # rnn_out = tf.matmul(rnn_out, attn_weights)
-        # rnn_out = tf.reshape(rnn_out, [-1, story_maxlen, n_embed])
-
         hid_q_tmp = tf.expand_dims(hidden_question, 1)
         energy = tf.reduce_sum(rnn_out * hid_q_tmp, axis=2)
         alphas = tf.nn.softmax(energy, axis=1)
@@ -488,8 +475,8 @@ def main(model,
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
         ("NE" + str(n_embed) + "_") + \
         "B" + str(n_batch)
-    save_dir = os.path.join('train_log', 'babi', level, str(qid))
-    save_path = os.path.join(save_dir, filename)
+    save_dir = os.path.join('train_log', 'babi', level)
+    save_path = os.path.join(save_dir, str(qid), filename)
 
     file_manager(save_path)
 
