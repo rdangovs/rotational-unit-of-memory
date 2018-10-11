@@ -16,7 +16,7 @@ from termcolor import colored
 from utils import *
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
-from RUM import RUMCell, rotation_operator, rotate
+from RUM import RUMCell
 from baselineModels.GORU import GORUCell
 from baselineModels.EUNN import EUNNCell
 
@@ -105,26 +105,14 @@ def vectorize_stories(data, word_idx, story_maxlen, query_maxlen, attention, lev
         if level == "word":
             x = [word_idx[w] for w in story]
             q = [word_idx[w] for w in query]
-
             len_x = len(x)
             if len_x < story_maxlen:
                 x = [0] * (story_maxlen - len_x) + x
-
             len_q = len(q)
             q_len.append(len_q)
             for i in range(len_q, query_maxlen):
                 q.append(0)
-
-            if not attention:
-                y = word_idx[answer]
-            else:
-                # [experimental] does the scheme that me and Preslav discussed
-                ind = word_idx[answer]
-                y = x + [ind]
-                numbers = range(ind) + range(ind + 1, vocab_length)
-                r = random.choice(numbers)
-                x = x + [r]
-                len_x += 1
+            y = word_idx[answer]
             x_len.append(len_x)
             xs.append(x)
             qs.append(q)
@@ -150,48 +138,10 @@ def vectorize_stories(data, word_idx, story_maxlen, query_maxlen, attention, lev
     return np.array(xs), np.array(qs), np.array(ys), x_len, q_len
 
 
-def attention_sentence(attn_type,
-                       rum_attn,
-                       rnn_outputs,
-                       encoded_question,
-                       n_hidden,
-                       eps=1e-12):
-    """ the attention mechansim for the 'sentence' level """
-    with tf.variable_scope("attention"):
-        if rum_attn:
-            last_hidden_state = rnn_outputs[:, -1, :]
-
-        if attn_type == "cosine":
-            encoded_question_unit = tf.nn.l2_normalize(
-                encoded_question, 2, epsilon=eps)
-            rnn_outputs_unit = tf.nn.l2_normalize(rnn_outputs, 2, epsilon=eps)
-
-        # get the energy
-        enc_q_tr = tf.transpose(
-            encoded_question_unit if attn_type == "cosine" else encoded_question, [0, 2, 1])
-        energy = tf.matmul(rnn_outputs_unit if attn_type ==
-                           "cosine" else rnn_outputs, enc_q_tr)
-        alphas = tf.nn.softmax(energy, axis=1)
-
-        weighted_outputs = alphas * rnn_outputs
-        context = tf.reduce_sum(weighted_outputs, axis=1)
-
-        if rum_attn:
-            final_h, _ = rotate(context, tf.reshape(
-                encoded_question, [-1, n_hidden]), last_hidden_state)
-            n_hidden_output = n_hidden
-        else:
-            final_h = tf.concat([context, tf.reshape(
-                encoded_question, [-1, n_hidden])], axis=1)
-            n_hidden_output = 2 * n_hidden
-    return final_h, n_hidden_output
-
-
 def word_model(cell,
                n_hidden,
                n_embed,
                attention,
-               margin,
                vocab_size,
                story_maxlen,
                query_maxlen
@@ -201,13 +151,9 @@ def word_model(cell,
     """
 
     # model
-    margin = float(margin)
     sentence = tf.placeholder("int32", [None, story_maxlen])
     question = tf.placeholder("int32", [None, query_maxlen])
-    if not attention:
-        answer_holder = tf.placeholder("int64", [None])
-    else:
-        answer_holder = tf.placeholder("int64", [None, story_maxlen])
+    answer_holder = tf.placeholder("int64", [None])
 
     n_output = n_hidden
     n_input = n_embed
@@ -220,91 +166,72 @@ def word_model(cell,
             -embed_init_val, embed_init_val), dtype=tf.float32)
         encoded_story = tf.nn.embedding_lookup(embed, sentence)
         encoded_question = tf.nn.embedding_lookup(embed, question)
-    if attention:
-        encoded_answer = tf.nn.embedding_lookup(embed, answer_holder)
-    else:
-        merged = tf.concat([encoded_story, encoded_question], axis=1)
+    merged = tf.concat([encoded_story, encoded_question], axis=1)
 
-    if not attention:
-        merged, _ = tf.nn.dynamic_rnn(cell, merged, dtype=tf.float32)
-        print("merged:", colored(merged, 'green'))
-        # hidden to output
-        with tf.variable_scope("hidden_to_output"):
-            V_init_val = np.sqrt(6.) / np.sqrt(n_output + n_input)
-            V_weights = tf.get_variable("V_weights", shape=[
-                n_hidden, n_classes], dtype=tf.float32,
-                initializer=tf.random_uniform_initializer(-V_init_val, V_init_val))
-            V_bias = tf.get_variable("V_bias", shape=[
-                n_classes], dtype=tf.float32, initializer=tf.constant_initializer(0.01))
+    merged, _ = tf.nn.dynamic_rnn(cell, merged, dtype=tf.float32)
+    print("merged:", colored(merged, 'green'))
+    # hidden to output
+    with tf.variable_scope("hidden_to_output"):
+        V_init_val = np.sqrt(6.) / np.sqrt(n_output + n_input)
+        V_weights = tf.get_variable("V_weights", shape=[
+            n_hidden, n_classes], dtype=tf.float32,
+            initializer=tf.random_uniform_initializer(-V_init_val, V_init_val))
+        V_bias = tf.get_variable("V_bias", shape=[
+            n_classes], dtype=tf.float32, initializer=tf.constant_initializer(0.01))
 
-            merged_list = tf.unstack(merged, axis=1)[-1]
-            temp_out = tf.matmul(merged_list, V_weights)
-            final_out = tf.nn.bias_add(temp_out, V_bias)
+        merged_list = tf.unstack(merged, axis=1)[-1]
+        temp_out = tf.matmul(merged_list, V_weights)
+        final_out = tf.nn.bias_add(temp_out, V_bias)
 
-        with tf.variable_scope("loss"):
-            # evaluate process
-            cost = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-                logits=final_out, labels=answer_holder))
-            correct_pred = tf.equal(tf.argmax(final_out, 1), answer_holder)
-            accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
-    else:
-        output_q, _ = tf.nn.dynamic_rnn(
-            cell, encoded_question, dtype=tf.float32)
-        output_x, _ = tf.nn.dynamic_rnn(cell, encoded_story, dtype=tf.float32)
-        output_a, _ = tf.nn.dynamic_rnn(cell, encoded_answer, dtype=tf.float32)
-        print("output_x:", colored(output_x, 'green'))
-        print("output_q:", colored(output_q, 'green'))
-        print("output_a:", colored(output_a, 'green'))
-        with tf.variable_scope("attention"):
-            ref_attn = tf.get_variable("ref_attention", shape=[
-                                       n_hidden, 1], dtype=tf.float32)
-            W_attn = tf.get_variable("W_attention", shape=[
-                                     n_hidden, n_hidden], dtype=tf.float32)
-            b_attn = tf.get_variable("b_attention", shape=[
-                                     n_hidden], dtype=tf.float32,
-                                     initializer=tf.constant_initializer(0.01))
-            output_q_p = tf.reshape(output_q, [-1, n_hidden])
-            output_x_p = tf.reshape(output_x, [-1, n_hidden])
-            output_a_p = tf.reshape(output_a, [-1, n_hidden])
-            h_q = tf.nn.tanh(tf.matmul(output_q_p, W_attn) + b_attn)
-            h_x = tf.nn.tanh(tf.matmul(output_x_p, W_attn) + b_attn)
-            h_a = tf.nn.tanh(tf.matmul(output_a_p, W_attn) + b_attn)
-            h_q = tf.matmul(h_q, ref_attn)
-            h_x = tf.matmul(h_x, ref_attn)
-            h_a = tf.matmul(h_a, ref_attn)
-            h_q = tf.reshape(h_q, [-1, query_maxlen, 1])
-            h_x = tf.reshape(h_x, [-1, story_maxlen, 1])
-            h_a = tf.reshape(h_a, [-1, story_maxlen, 1])
-            alphas_q = tf.nn.softmax(h_q, axis=1)
-            alphas_x = tf.nn.softmax(h_x, axis=1)
-            alphas_a = tf.nn.softmax(h_a, axis=1)
-            # get context vectors
-            c_q = tf.reduce_sum(alphas_q * output_q, axis=1)
-            c_x = tf.reduce_sum(alphas_x * output_x, axis=1)
-            c_a = tf.reduce_sum(alphas_a * output_a, axis=1)
+    with tf.variable_scope("loss"):
+        # evaluate process
+        cost = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=final_out, labels=answer_holder))
+        correct_pred = tf.equal(tf.argmax(final_out, 1), answer_holder)
+        accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+    return cost, accuracy, sentence, question, answer_holder
 
-        with tf.variable_scope("loss"):
-            normalize_q = tf.nn.l2_normalize(c_q, 1)
-            normalize_x = tf.nn.l2_normalize(c_x, 1)
-            normalize_a = tf.nn.l2_normalize(c_a, 1)
-            cos_similarity_qa = tf.reduce_sum(
-                tf.multiply(normalize_q, normalize_a), axis=1)
-            cos_similarity_qx = tf.reduce_sum(
-                tf.multiply(normalize_q, normalize_x), axis=1)
-            prelim_loss = tf.nn.relu(
-                margin - cos_similarity_qa + cos_similarity_qx)
-            cost = tf.reduce_mean(prelim_loss)
-    if attention:
-        accuracy = None
-    return cost, accuracy, sentence, question, answer_holder, cos_similarity_qx
+
+def attention_sentence(rnn_outputs,
+                       n_hidden,
+                       story_maxlen,
+                       eps=1e-12):
+    """ the attention mechansim for the 'sentence' level """
+
+    with tf.variable_scope("attention"):
+        # get the energy
+        hidden_question = rnn_outputs[:, -1, :]
+        rnn_out = rnn_outputs[:, :-1, :]
+
+        print("rnn_out: ", rnn_out)
+        print("hidden_question: ", hidden_question)
+
+        # init_val = np.sqrt(6.) / np.sqrt(n_hidden)
+        # attn_weights = tf.get_variable('embed', [n_hidden, n_embed],
+        #                                initializer=tf.random_normal_initializer(
+        #     -init_val, init_val), dtype=tf.float32)
+        # rnn_out = tf.reshape(rnn_out, [-1, n_hidden])
+        # rnn_out = tf.matmul(rnn_out, attn_weights)
+        # rnn_out = tf.reshape(rnn_out, [-1, story_maxlen, n_embed])
+
+        hid_q_tmp = tf.expand_dims(hidden_question, 1)
+        energy = tf.reduce_sum(rnn_out * hid_q_tmp, axis=2)
+        alphas = tf.nn.softmax(energy, axis=1)
+        alphas = tf.expand_dims(alphas, -1)
+
+        weighted_outputs = alphas * rnn_out
+        context = tf.reduce_sum(weighted_outputs, axis=1)
+
+        final_h = tf.concat([context, hidden_question], axis=1)
+        n_hidden_output = 2 * n_hidden
+
+    return final_h, n_hidden_output
 
 
 def sentence_model(cell,
                    n_hidden,
                    n_embed,
                    attention,
-                   attn_type,
-                   rum_attn,
                    vocab_size,
                    story_maxlen):
     """ defining the NN core for the sentence level.
@@ -318,28 +245,21 @@ def sentence_model(cell,
         input_story = tf.placeholder(
             "float32", [None, story_maxlen, vocab_size])
         embed_init_val = np.sqrt(6.) / np.sqrt(vocab_size)
-        embed_story = tf.get_variable('embed_story', [vocab_size, n_embed],
-                                      initializer=tf.random_normal_initializer(
+        embed = tf.get_variable('embed', [vocab_size, n_embed],
+                                initializer=tf.random_normal_initializer(
             -embed_init_val, embed_init_val), dtype=tf.float32)
 
         tmp_inp = tf.reshape(input_story, [-1, vocab_size])
-        tmp_inp = tf.matmul(tmp_inp, embed_story)
+        tmp_inp = tf.matmul(tmp_inp, embed)
         encoded_story = tf.reshape(tmp_inp, [-1, story_maxlen, n_embed])
 
         question = tf.placeholder("float32", [None, 1, vocab_size])
 
-        n_embed_query = n_embed if not attention else n_hidden
-        embed_query = tf.get_variable('embed_query', [vocab_size, n_embed_query],
-                                      initializer=tf.random_normal_initializer(
-            -embed_init_val, embed_init_val), dtype=tf.float32)
         tmp_q = tf.reshape(question, [-1, vocab_size])
-        tmp_q = tf.matmul(tmp_q, embed_query)
-        encoded_question = tf.reshape(tmp_q, [-1, 1, n_embed_query])
+        tmp_q = tf.matmul(tmp_q, embed)
+        encoded_question = tf.reshape(tmp_q, [-1, 1, n_embed])
 
-        if not attention:
-            rnn_input = tf.concat([encoded_story, encoded_question], axis=1)
-        else:
-            rnn_input = encoded_story
+        rnn_input = tf.concat([encoded_story, encoded_question], axis=1)
 
     # unrolls the rnn
     rnn_outputs, _ = tf.nn.dynamic_rnn(
@@ -352,7 +272,7 @@ def sentence_model(cell,
     else:
         # attention mechanism
         final_h, n_hidden_output = attention_sentence(
-            attn_type, rum_attn, rnn_outputs, encoded_question, n_hidden)
+            rnn_outputs, n_hidden, story_maxlen)
 
     # hidden layer to output
     V_init_val = np.sqrt(6.) / np.sqrt(n_hidden_output + n_input)
@@ -364,6 +284,7 @@ def sentence_model(cell,
 
     temp_out = tf.matmul(final_h, V_weights)
     final_out = tf.nn.bias_add(temp_out, V_bias)
+
     answer_holder = tf.placeholder("int64", [None])
 
     # evaluate process
@@ -380,9 +301,6 @@ def sentence_model(cell,
 def nn_model(cell,
              level,
              attention,
-             attn_type,
-             rum_attn,
-             margin,
              n_hidden,
              n_embed,
              vocab_size,
@@ -391,17 +309,15 @@ def nn_model(cell,
     """ constructs the core NN model """
 
     if level == "word":
-        cost, accuracy, input_story, question, \
-            answer_holder, cos_similarity_qx = word_model(cell, n_hidden, n_embed, attention, margin,
-                                                          vocab_size, story_maxlen, query_maxlen)
+        cost, accuracy, input_story, question, answer_holder = word_model(cell, n_hidden, n_embed, attention,
+                                                                          vocab_size, story_maxlen, query_maxlen)
     elif level == "sentence":
         cost, accuracy, input_story, question, \
-            answer_holder = sentence_model(cell, n_hidden, n_embed, attention, attn_type, rum_attn,
-                                           vocab_size, story_maxlen)
-        cos_similarity_qx = None
+            answer_holder = sentence_model(
+                cell, n_hidden, n_embed, attention, vocab_size, story_maxlen)
     else:
         raise
-    return cost, accuracy, input_story, question, answer_holder, cos_similarity_qx
+    return cost, accuracy, input_story, question, answer_holder
 
 
 def main(model,
@@ -409,7 +325,6 @@ def main(model,
          data_path,
          level,
          attention,
-         margin,
          n_iter,
          n_batch,
          n_hidden,
@@ -422,8 +337,8 @@ def main(model,
          update_gate,
          activation,
          lambd,
-         attn_type,
-         rum_attn):
+         layer_norm,
+         zoneout):
     """ assembles the model, trains and then evaluates. """
 
     # preprocessing
@@ -483,8 +398,6 @@ def main(model,
     # notes: query_maxlen will be `None` if `level == sentence`;
     # moreover we added the `attention` and `level` arguments.
 
-    if attention and level == "word":
-        story_maxlen += 1
     # number of data points
     n_data = len(train_x)
     n_val = int(0.1 * n_data)
@@ -532,24 +445,22 @@ def main(model,
                        eta_=norm,
                        update_gate=update_gate,
                        lambda_=lambd,
-                       activation=act)
+                       activation=act,
+                       use_layer_norm=layer_norm,
+                       use_zoneout=zoneout)
     elif model == "EUNN":
         cell = EUNNCell(n_hidden, capacity, FFT, comp, name="eunn")
     elif model == "GORU":
         cell = GORUCell(n_hidden, capacity, FFT)
 
-    cost, accuracy, input_story, question, \
-        answer_holder, cos_similarity_qx = nn_model(cell,
-                                                    level,
-                                                    attention,
-                                                    attn_type,
-                                                    rum_attn,
-                                                    margin,
-                                                    n_hidden,
-                                                    n_embed,
-                                                    vocab_size,
-                                                    story_maxlen,
-                                                    query_maxlen)
+    cost, accuracy, input_story, question, answer_holder = nn_model(cell,
+                                                                    level,
+                                                                    attention,
+                                                                    n_hidden,
+                                                                    n_embed,
+                                                                    vocab_size,
+                                                                    story_maxlen,
+                                                                    query_maxlen)
 
     # initialization
     tf.summary.scalar('cost', cost)
@@ -563,14 +474,12 @@ def main(model,
     filename = ("attn" if attention else "") + \
         model + "_H" + str(n_hidden) + "_" + \
         ("L" + str(lambd) + "_" if lambd else "") + \
-        ("E" + str(eta) + "_" if norm else "") + \
-        ("A" + activation + "_" if (model == "RUM" and activation) else "") + \
+        ("E" + str(norm) + "_" if norm else "") + \
+        ("A" + activation + "_" if activation else "") + \
         ("U_" if update_gate else "") + \
         (str(capacity) if model in ["EUNN", "GORU"] else "") + \
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
         ("NE" + str(n_embed) + "_") + \
-        ("AT" + str(attn_type) + "_" if level == "sentence" and attention else "") + \
-        ("RA" + str(attn_type) + "_" if (level == "sentence" and attention and model == "RUM") else "") + \
         "B" + str(n_batch)
     save_path = os.path.join('train_log', 'babi', level, str(qid), filename)
 
@@ -674,41 +583,22 @@ def main(model,
             step += 1
 
             if step % 500 == 1:
-                if not (level == "word" and attention):
-                    val_loss, val_acc = sess.run(
-                        [cost, accuracy], feed_dict=val_dict)
-                    print(colored("Validation Loss= " +
-                                  "{:.6f}".format(val_loss) + ", Validation Accuracy= " +
-                                  "{:.5f}".format(val_acc), "green"))
-                    if val_acc > ultimate_accuracy:
-                        ultimate_accuracy = val_acc
-                        print(col("saving graph and metadata in " + save_path, "b"))
-                        saver.save(sess, os.path.join(save_path, "model"))
-                        ultimate_steps = 0
-                    else:
-                        ultimate_steps += 1
-                    if ultimate_steps == 10:
-                        print(col("Early stop!", 'r'))
-                        break
-                    print(col((ultimate_accuracy, ultimate_steps), 'r'))
+                val_loss, val_acc = sess.run(
+                    [cost, accuracy], feed_dict=val_dict)
+                print(colored("Validation Loss= " +
+                              "{:.6f}".format(val_loss) + ", Validation Accuracy= " +
+                              "{:.5f}".format(val_acc), "green"))
+                if val_acc > ultimate_accuracy:
+                    ultimate_accuracy = val_acc
+                    print(col("saving graph and metadata in " + save_path, "b"))
+                    saver.save(sess, os.path.join(save_path, "model"))
+                    ultimate_steps = 0
                 else:
-                    # validation
-                    val_outputs = []
-                    for i in range(len(val_dicts)):
-                        val_similarity = sess.run(
-                            cos_similarity_qx, feed_dict=val_dicts[i])
-                        val_similarity = np.reshape(
-                            val_similarity, (len(val_x), 1))
-                        val_outputs.append(val_similarity)
-
-                    val_total = np.concatenate(val_outputs, axis=1)
-                    val_argmax = np.argmax(val_total, axis=1)
-                    val_equals = np.equal(
-                        val_argmax, val_ground_truths, dtype=int)
-                    val_acc = float(np.sum(val_equals)) / len(val_x)
-                    print(colored("Validation Accuracy= " +
-                                  "{:.5f}".format(val_acc), "yellow"))
-                f.write("{:.5f}\n".format(val_acc))
+                    ultimate_steps += 1
+                if ultimate_steps == 10:
+                    print(col("Early stop!", 'r'))
+                    break
+                print(col((ultimate_accuracy, ultimate_steps), 'r'))
 
         print(colored("Optimization Finished!", 'blue'))
 
@@ -716,30 +606,12 @@ def main(model,
         print(col("restoring from " + save_path + "/model", "b"))
         saver.restore(sess, save_path + "/model")
         print(col("restored the best model on the validation data", "b"))
-
-        if not (level == "word" and attention):
-            test_acc, test_loss = sess.run(
-                [accuracy, cost], feed_dict=test_dict)
-            f.write("Test result: Loss= " + "{:.6f}".format(test_loss) +
-                    ", Accuracy= " + "{:.5f}\n".format(test_acc))
-            print(colored("Test result: Loss= " + "{:.6f}".format(test_loss) +
-                          ", Accuracy= " + "{:.5f}".format(test_acc), "green"))
-        else:
-            test_outputs = []
-            for i in range(len(test_dicts)):
-                test_similarity = sess.run(
-                    cos_similarity_qx, feed_dict=test_dicts[i])
-                test_similarity = np.reshape(
-                    test_similarity, (len(val_x), 1))
-                test_outputs.append(test_similarity)
-            test_total = np.concatenate(test_outputs, axis=1)
-            test_argmax = np.argmax(test_total, axis=1)
-            test_equals = np.equal(
-                test_argmax, test_ground_truths, dtype=int)
-            test_acc = float(np.sum(test_equals)) / len(test_x)
-            f.write("test\n")
-            f.write("{:.5f}\n".format(test_acc))
-            print(colored("Accuracy= " + "{:.5f}".format(test_acc), "green"))
+        test_acc, test_loss = sess.run(
+            [accuracy, cost], feed_dict=test_dict)
+        f.write("Test result: Loss= " + "{:.6f}".format(test_loss) +
+                ", Accuracy= " + "{:.5f}\n".format(test_acc))
+        print(colored("Test result: Loss= " + "{:.6f}".format(test_loss) +
+                      ", Accuracy= " + "{:.5f}".format(test_acc), "green"))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -752,12 +624,10 @@ if __name__ == "__main__":
                         help='level: word or sentence')
     parser.add_argument('attention', type=str,
                         default=False, help='is attn. mechn.')
-    parser.add_argument('--margin', '-M', type=str,
-                        default=0.2, help='margin for attention')
     parser.add_argument('--n_iter', '-I', type=int,
                         default=10000, help='training iteration number')
     parser.add_argument(
-        '--data_path', default="./data/babi/tasks_1-20_v1-2.tar", type=str)
+        '--data_path', default="./data/babi/tasks_1-20_v1-2.tar.gz", type=str)
     parser.add_argument('--n_batch', '-B', type=int,
                         default=32, help='batch size')
     parser.add_argument('--n_hidden', '-H', type=int,
@@ -772,16 +642,16 @@ if __name__ == "__main__":
                         help='FFT style, default is False')
     parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
     parser.add_argument('--norm', '-N', default=None, type=float)
-    parser.add_argument('--update_gate', '-U', default=1,
-                        type=bool, help='is there update gate?')
+    parser.add_argument('--update_gate', '-U', default="True",
+                        type=str, help='is there update gate?')
     parser.add_argument('--activation', '-A', default="relu",
                         type=str, help='specify activation')
     parser.add_argument('--lambd', '-LA', default=0,
                         type=int, help='lambda for RUM model')
-    parser.add_argument('--attn_type', '-AT', default="standard",
-                        type=str, help="[for sentence level only], one of the possible choices: 'standard, cosine, rum'")
-    parser.add_argument('--rum_attn', '-RA', default=0,
-                        type=bool, help="whether to do the RUM-type attention")
+    parser.add_argument('--layer_norm', '-LN', default="False",
+                        type=str, help='is there layer normalization?')
+    parser.add_argument('--zoneout', '-Z', default="False",
+                        type=str, help='is there zoneout?')
 
     args = parser.parse_args()
     dicts = vars(args)
@@ -800,7 +670,6 @@ if __name__ == "__main__":
         'qid': dicts['qid'],
         'level': dicts['level'],
         'attention': dicts['attention'],
-        'margin': dicts['margin'],
         'data_path': dicts['data_path'],
         'n_iter': dicts['n_iter'],
         'n_batch': dicts['n_batch'],
@@ -814,8 +683,8 @@ if __name__ == "__main__":
         'update_gate': dicts['update_gate'],
         'activation': dicts['activation'],
         'lambd': dicts['lambd'],
-        'attn_type': dicts['attn_type'],
-        'rum_attn': dicts['rum_attn']
+        'layer_norm': dicts['layer_norm'],
+        'zoneout': dicts['zoneout'],
     }
 
     main(**kwargs)

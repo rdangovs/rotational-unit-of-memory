@@ -221,9 +221,6 @@ class RUMCell(RNNCell):
             else:
                 tmp_rotation, costh = rotation_operator(
                     x_emb, r, self._hidden_size)
-                # print(tmp_rotation)
-                # print(assoc_mem)
-                # input()
                 Rt = tf.matmul(assoc_mem, tmp_rotation)
                 state_new = tf.reshape(tf.matmul(Rt, tf.reshape(
                     state, [size_batch, self._hidden_size, 1])), [size_batch, self._hidden_size])
