@@ -11,6 +11,7 @@ import tarfile
 import re
 import errno
 import random
+import datetime
 
 from termcolor import colored
 from utils import *
@@ -21,6 +22,10 @@ from baselineModels.GORU import GORUCell
 from baselineModels.EUNN import EUNNCell
 
 from tensorflow.contrib.layers import fully_connected
+
+sp = None  # global bool variable for the single_pass option
+g = None  # global variable in which we will write the save_path for the single_pass
+
 
 # preprocess data
 
@@ -476,12 +481,15 @@ def main(model,
         ("L" + str(lambd) + "_" if lambd else "") + \
         ("E" + str(norm) + "_" if norm else "") + \
         ("A" + activation + "_" if activation else "") + \
-        ("U_" if update_gate else "") + \
+        ("U_" if update_gate and model == "RUM" else "") + \
+        ("Z_" if zoneout and model == "RUM" else "") + \
+        ("ln_" if layer_norm and model == "RUM" else "") + \
         (str(capacity) if model in ["EUNN", "GORU"] else "") + \
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
         ("NE" + str(n_embed) + "_") + \
         "B" + str(n_batch)
-    save_path = os.path.join('train_log', 'babi', level, str(qid), filename)
+    save_dir = os.path.join('train_log', 'babi', level, str(qid))
+    save_path = os.path.join(save_dir, filename)
 
     file_manager(save_path)
 
@@ -612,6 +620,28 @@ def main(model,
                 ", Accuracy= " + "{:.5f}\n".format(test_acc))
         print(colored("Test result: Loss= " + "{:.6f}".format(test_loss) +
                       ", Accuracy= " + "{:.5f}".format(test_acc), "green"))
+        f.close()
+
+    # what follow is for the single pass
+    global sp
+    global g
+    if sp:
+        single_pass_path = os.path.join(
+            save_dir, "summary_eval_" + filename + ".txt")
+        if g == None:
+            g = open(single_pass_path, 'w')
+            if not os.path.exists(single_pass_path):
+                try:
+                    os.makedirs(os.path.dirname(single_pass_path))
+                except OSError as exc:
+                    if exc.errno != errno.EEXIST:
+                        raise
+            g.write(col(datetime.datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S") + "\n", 'r'))
+        g.write(col("id " + str(qid) + ": " +
+                    "{:.5f}".format(test_acc) + "\n", "y"))
+        g.flush()
+    return test_acc  # returns the test accuracy to calculate the average accuracy
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -619,7 +649,7 @@ if __name__ == "__main__":
     parser.add_argument('--gpu', help='comma separated list of GPU(s) to use.')
     parser.add_argument("model", default='LSTM',
                         help='Model name: LSTM, EUNN, GRU, GORU')
-    parser.add_argument('qid', type=int, default=20, help='Test set')
+    parser.add_argument('qid', type=int, default=-1, help='Test set')
     parser.add_argument('level', type=str, default="word",
                         help='level: word or sentence')
     parser.add_argument('attention', type=str,
@@ -652,6 +682,8 @@ if __name__ == "__main__":
                         type=str, help='is there layer normalization?')
     parser.add_argument('--zoneout', '-Z', default="False",
                         type=str, help='is there zoneout?')
+    parser.add_argument('--single_pass', default=0,
+                        type=bool, help='single pass evaluation?')
 
     args = parser.parse_args()
     dicts = vars(args)
@@ -686,5 +718,19 @@ if __name__ == "__main__":
         'layer_norm': dicts['layer_norm'],
         'zoneout': dicts['zoneout'],
     }
+    sp = args.single_pass
 
-    main(**kwargs)
+    if args.single_pass:
+        assert args.qid == -1
+        print(col('starting single pass evaluation', 'b'))
+        summ = 0.
+        for i in range(1, 3):
+            tf.reset_default_graph()
+            kwargs['qid'] = i
+            summ += main(**kwargs)
+        summ = summ / 20.
+        g.write(col("average: " + "{:.5f}".format(summ) + "\n", "g"))
+        g.close()
+
+    else:
+        main(**kwargs)
