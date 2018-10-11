@@ -301,7 +301,7 @@ def nn_model(cell,
     """ constructs the core NN model """
 
     if level == "word":
-        cost, accuracy, input_story, question, answer_holder = word_model(cell, n_hidden, n_embed, attention,
+        cost, accuracy, input_story, question, answer_holder = word_model(cell, n_hidden, n_embed,
                                                                           vocab_size, story_maxlen, query_maxlen)
     elif level == "sentence":
         cost, accuracy, input_story, question, \
@@ -478,6 +478,7 @@ def main(model,
     save_dir = os.path.join('train_log', 'babi', level)
     save_path = os.path.join(save_dir, str(qid), filename)
 
+    print(col("file managing: " + save_path, "b"))
     file_manager(save_path)
 
     # what follows is task specific
@@ -515,37 +516,12 @@ def main(model,
         accs = []
 
         # prepare validation/test dictinary
-        if level == "word" and attention:
-            # validation
-            val_dicts = []
-            val_ground_truths = [val_y[i][-1] for i in range(len(val_y))]
-            val_ground_truths = np.array(val_ground_truths)
-            cores = [val_y[i][:-1] for i in range(len(val_y))]
-            for j in range(vocab_size):
-                val_input = []
-                for i in range(len(val_x)):
-                    val_input.append(list(cores[i]) + [j])
-                val_dicts.append(
-                    {input_story: np.array(val_input), question: val_q, answer_holder: val_y})
-            # test
-            test_dicts = []
-            test_ground_truths = [test_y[i][-1] for i in range(len(test_y))]
-            test_ground_truths = np.array(test_ground_truths)
-            cores = [test_y[i][:-1] for i in range(len(test_y))]
-            for j in range(vocab_size):
-                test_input = []
-                for i in range(len(test_x)):
-                    test_input.append(list(cores[i]) + [j])
-                test_dicts.append(
-                    {input_story: np.array(test_input), question: test_q, answer_holder: test_y})
-
-        else:
-            # validation
-            val_dict = {input_story: val_x,
-                        question: val_q, answer_holder: val_y}
-            # test
-            test_dict = {input_story: test_x,
-                         question: test_q, answer_holder: test_y}
+        # validation
+        val_dict = {input_story: val_x,
+                    question: val_q, answer_holder: val_y}
+        # test
+        test_dict = {input_story: test_x,
+                     question: test_q, answer_holder: test_y}
 
         # the factor of 10 is tentative [experimental]
         while step < 10 * n_iter:
@@ -637,10 +613,10 @@ if __name__ == "__main__":
     parser.add_argument("model", default='LSTM',
                         help='Model name: LSTM, EUNN, GRU, GORU')
     parser.add_argument('qid', type=int, default=-1, help='Test set')
-    parser.add_argument('level', type=str, default="word",
+    parser.add_argument('level', type=str, default="sentence",
                         help='level: word or sentence')
     parser.add_argument('attention', type=str,
-                        default=False, help='is attn. mechn.')
+                        default="False", help='is attn. mechn.')
     parser.add_argument('--n_iter', '-I', type=int,
                         default=10000, help='training iteration number')
     parser.add_argument(
@@ -655,7 +631,7 @@ if __name__ == "__main__":
                         help='Tunable style capacity, only for EUNN, default value is 2')
     parser.add_argument('--comp', '-C', type=str, default="False",
                         help='Complex domain or Real domain. Default is False: real domain')
-    parser.add_argument('--FFT', '-F', type=str, default="True",
+    parser.add_argument('--FFT', '-F', type=str, default="False",
                         help='FFT style, default is False')
     parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
     parser.add_argument('--norm', '-N', default=None, type=float)
@@ -711,7 +687,7 @@ if __name__ == "__main__":
         assert args.qid == -1
         print(col('starting single pass evaluation', 'b'))
         summ = 0.
-        for i in range(1, 3):
+        for i in range(1, 21):
             tf.reset_default_graph()
             kwargs['qid'] = i
             summ += main(**kwargs)
