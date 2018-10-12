@@ -7,23 +7,18 @@ import argparse
 import os
 import tensorflow as tf
 import sys
+import tarfile
+import re
+import errno
+import random
+import datetime
+
 from utils import *
-import shutil
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
-
-from tensorflow.python.ops import math_ops
-from tensorflow.python.ops import nn_ops
-
 from RUM import RUMCell
 from baselineModels.GORU import GORUCell
 from baselineModels.EUNN import EUNNCell
-
-
-def random_variable(shape, dev):
-    """init a random variable"""
-    initial = tf.truncated_normal(shape, stddev=dev)
-    return tf.Variable(initial)
 
 
 def copying_data(T, n_data, n_sequence):
@@ -50,17 +45,16 @@ def main(
         comp,
         FFT,
         learning_rate,
-        decay,
-        learning_rate_decay,
         norm,
         update_gate,
         activation,
-        lambd):
+        lambd,
+        layer_norm,
+        zoneout):
 
     learning_rate = float(learning_rate)
-    decay = float(decay)
 
-    # --- Set data params ----------------
+    # data params
     n_input = 10
     n_output = 9
     n_sequence = 10
@@ -70,12 +64,11 @@ def main(
     n_steps = T + 20
     n_classes = 9
 
-    # --- Create data --------------------
-
+    # create data
     train_x, train_y = copying_data(T, n_train, n_sequence)
     test_x, test_y = copying_data(T, n_test, n_sequence)
 
-    # --- Create graph and compute gradients ----------------------
+    # graph and gradients
     x = tf.placeholder("int32", [None, n_steps])
     y = tf.placeholder("int64", [None, n_steps])
 
@@ -100,15 +93,16 @@ def main(
                               eta_=norm,
                               update_gate=update_gate,
                               lambda_=lambd,
-                              activation=act)
-    elif model == "ARUM":
-        cell = ARUMCell(n_hidden, T_norm=norm)
+                              activation=act,
+                              use_layer_norm=layer_norm,
+                              use_zoneout=zoneout)
     elif model == "EUNN":
         cell = EUNNCell(n_hidden, capacity, FFT, comp)
     elif model == "GORU":
         cell = GORUCell(n_hidden, capacity, FFT)
     elif model == "RNN":
         cell = BasicRNNCell(n_hidden)
+
     hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
 
     # hidden to output
@@ -132,7 +126,7 @@ def main(
 
     # initialization
     optimizer = tf.train.RMSPropOptimizer(
-        learning_rate=learning_rate, decay=decay).minimize(cost)
+        learning_rate=learning_rate).minimize(cost)
     init = tf.global_variables_initializer()
 
     # save
@@ -141,21 +135,26 @@ def main(
         ("E" + str(eta) + "_" if norm else "") + \
         ("A" + activation + "_" if activation else "") + \
         ("U_" if update_gate else "") + \
+        ("Z_" if zoneout and model == "RUM" else "") + \
+        ("ln_" if layer_norm and model == "RUM" else "") + \
         (str(capacity) if model in ["EUNN", "GORU"] else "") + \
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
         "B" + str(n_batch)
     save_path = os.path.join('train_log', 'copying', 'T' + str(T), filename)
 
-    if os.path.exists(save_path):
-        print(colored(
-            "Directory exists. Enter a string in [Y, yes, y] to override it.", "red"))
-        inp = raw_input("Enter key here: ")
-        if inp in ["Y", "yes", "y"]:
-            print(colored("OK: overriding...", "red"))
-            shutil.rmtree(save_path)
-        else:
-            print(colored("Invalid key: exiting...", "blue"))
-            exit()
+    file_manager(save_path)
+
+    # what follows is task specific
+    filepath = os.path.join(save_path, "eval.txt")
+    if not os.path.exists(os.path.dirname(filepath)):
+        try:
+            os.makedirs(os.path.dirname(filepath))
+        except OSError as exc:
+            if exc.errno != errno.EEXIST:
+                raise
+    f = open(filepath, 'w')
+    f.write("accuracies \n")
+
     log(kwargs, save_path)
 
     merged_summary = tf.summary.merge_all()
@@ -163,9 +162,8 @@ def main(
 
     parameters_profiler()
 
-    # --- Training Loop ----------------------
+    # train
     saver = tf.train.Saver()
-    mx2 = 0
     step = 0
     with tf.Session() as sess:
         sess.run(init)
@@ -184,12 +182,18 @@ def main(
             sess.run(optimizer, feed_dict={x: batch_x, y: batch_y})
             print(col("Iter " + str(step) + ", Minibatch Loss: " +
                       "{:.6f}".format(loss) + ", Training Accuracy: " +
-                      "{:.5f}".format(acc), 'b'))
+                      "{:.5f}".format(acc), 'g'))
             steps.append(step)
             losses.append(loss)
             accs.append(acc)
+            if step % 200 == 0:
+                f.write(col("%d\t%f\t%f\n" % (step, loss, acc), 'y'))
+                f.flush()
+
             if step % 1000 == 0:
-                saver.save(sess, save_path)
+                print(col("saving graph and metadata in " + save_path, "b"))
+                saver.save(sess, os.path.join(save_path, "model"))
+
             step += 1
 
         print(col("Optimization Finished!", 'b'))
@@ -197,40 +201,44 @@ def main(
         # test
         test_acc = sess.run(accuracy, feed_dict={x: test_x, y: test_y})
         test_loss = sess.run(cost, feed_dict={x: test_x, y: test_y})
-        print("finish this!")  # finish this
+        f.write(col("Test result: Loss= " + "{:.6f}".format(test_loss) +
+                    ", Accuracy= " + "{:.5f}".format(test_acc), 'g'))
+
+        f.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Copying Task")
+        description="recall task")
     parser.add_argument('--gpu', help='comma separated list of GPU(s) to use.')
-    parser.add_argument("model", default='DRUM',
-                        help='Model name: LSTM, LSTSM, LSTRM, LSTUM, EURNN, GRU, GRRU, GORU, GRRU')
+    parser.add_argument("model", default='LSTM',
+                        help='Model name: LSTM, EUNN, GRU, GORU')
     parser.add_argument('-T', type=int, default=500,
                         help='Information sequence length')
     parser.add_argument('--n_iter', '-I', type=int,
-                        default=20000, help='training iteration number')
+                        default=10000, help='training iteration number')
     parser.add_argument('--n_batch', '-B', type=int,
-                        default=128, help='batch size')
+                        default=32, help='batch size')
     parser.add_argument('--n_hidden', '-H', type=int,
-                        default=250, help='hidden layer size')
+                        default=100, help='hidden layer size')
     parser.add_argument('--capacity', '-L', type=int, default=2,
-                        help='Tunable style capacity, only for EURNN, default value is 2')
+                        help='Tunable style capacity, only for EUNN, default value is 2')
     parser.add_argument('--comp', '-C', type=str, default="False",
                         help='Complex domain or Real domain. Default is False: real domain')
-    parser.add_argument('--FFT', '-F', type=str,
-                        default="False", help='FFT style, default is False')
+    parser.add_argument('--FFT', '-F', type=str, default="False",
+                        help='FFT style, default is False')
     parser.add_argument('--learning_rate', '-R', default=0.001, type=str)
-    parser.add_argument('--decay', '-D', default=0.9, type=str)
-    parser.add_argument('--learning_rate_decay', '-RD',
-                        default="False", type=str)
-    parser.add_argument('--norm', '-norm', default=None, type=float)
-    parser.add_argument('--update_gate', '-U', default=1,
-                        type=bool, help='is there update gate?')
+    parser.add_argument('--norm', '-N', default=None, type=float)
+    parser.add_argument('--update_gate', '-U', default="True",
+                        type=str, help='is there update gate?')
     parser.add_argument('--activation', '-A', default="relu",
                         type=str, help='specify activation')
     parser.add_argument('--lambd', '-LA', default=0,
                         type=int, help='lambda for RUM model')
+    parser.add_argument('--layer_norm', '-LN', default="False",
+                        type=str, help='is there layer normalization?')
+    parser.add_argument('--zoneout', '-Z', default="False",
+                        type=str, help='is there zoneout?')
 
     args = parser.parse_args()
     dicts = vars(args)
@@ -254,12 +262,12 @@ if __name__ == "__main__":
         'comp': dicts['comp'],
         'FFT': dicts['FFT'],
         'learning_rate': dicts['learning_rate'],
-        'decay': dicts['decay'],
-        'learning_rate_decay': dicts['learning_rate_decay'],
         'norm': dicts['norm'],
         'update_gate': dicts['update_gate'],
         'activation': dicts['activation'],
-        'lambd': dicts['lambd']
+        'lambd': dicts['lambd'],
+        'layer_norm': dicts['layer_norm'],
+        'zoneout': dicts['zoneout'],
     }
 
     main(**kwargs)

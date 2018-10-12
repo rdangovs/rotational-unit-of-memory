@@ -441,6 +441,8 @@ def main(model,
         cell = EUNNCell(n_hidden, capacity, FFT, comp, name="eunn")
     elif model == "GORU":
         cell = GORUCell(n_hidden, capacity, FFT)
+    elif model == "RNN":
+        cell = BasicRNNCell(n_hidden)
 
     cost, accuracy, input_story, question, answer_holder = nn_model(cell,
                                                                     level,
