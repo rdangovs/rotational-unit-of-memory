@@ -13,15 +13,12 @@ import errno
 import random
 import datetime
 
-from termcolor import colored
 from utils import *
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
 from RUM import RUMCell
 from baselineModels.GORU import GORUCell
 from baselineModels.EUNN import EUNNCell
-
-from tensorflow.contrib.layers import fully_connected
 
 sp = None  # global bool variable for the single_pass option
 g = None  # global variable in which we will write the save_path for the single_pass
@@ -174,7 +171,7 @@ def word_model(cell,
     merged = tf.concat([encoded_story, encoded_question], axis=1)
 
     merged, _ = tf.nn.dynamic_rnn(cell, merged, dtype=tf.float32)
-    print("merged:", colored(merged, 'green'))
+    print("merged:", col(merged, 'g'))
     # hidden to output
     with tf.variable_scope("hidden_to_output"):
         V_init_val = np.sqrt(6.) / np.sqrt(n_output + n_input)
@@ -408,16 +405,16 @@ def main(model,
     n_train = len(train_x)
 
     # profiler printing
-    print(colored('level: ' + level, 'yellow'))
-    print(colored('attention: ' + str(attention), 'yellow'))
-    print(colored('qid: ' + str(qid), 'yellow'))
-    print(colored('vocab = {}'.format(vocab), 'yellow'))
-    print(colored('x.shape = {}'.format(np.array(train_x).shape), 'yellow'))
-    print(colored('xq.shape = {}'.format(np.array(train_q).shape), 'yellow'))
-    print(colored('y.shape = {}'.format(np.array(train_y).shape), 'yellow'))
-    print(colored('story_maxlen, query_maxlen = {}, {}'.format(
-        story_maxlen, query_maxlen), 'yellow'))
-    print(colored("building model", "blue"))
+    print(col('level: ' + level, 'y'))
+    print(col('attention: ' + str(attention), 'y'))
+    print(col('qid: ' + str(qid), 'y'))
+    print(col('vocab = {}'.format(vocab), 'y'))
+    print(col('x.shape = {}'.format(np.array(train_x).shape), 'y'))
+    print(col('xq.shape = {}'.format(np.array(train_q).shape), 'y'))
+    print(col('y.shape = {}'.format(np.array(train_y).shape), 'y'))
+    print(col('story_maxlen, query_maxlen = {}, {}'.format(
+        story_maxlen, query_maxlen), 'y'))
+    print(col("building model", "b"))
 
     # defines the rnn cell
     if model == "LSTM":
@@ -540,13 +537,13 @@ def main(model,
             if not (level == "word" and attention):
                 acc = sess.run(accuracy, feed_dict=train_dict)
                 if step % 100 == 0:
-                    print(colored("Iter " + str(step) + ", Minibatch Loss= " +
-                                  "{:.6f}".format(loss) + ", Training Accuracy= " +
-                                  "{:.5f}".format(acc), 'green'))
+                    print(col("Iter " + str(step) + ", Minibatch Loss= " +
+                              "{:.6f}".format(loss) + ", Training Accuracy= " +
+                              "{:.5f}".format(acc), 'g'))
             else:
                 if step % 100 == 0:
-                    print(colored("Iter " + str(step) + ", Minibatch Loss= " +
-                                  "{:.6f}".format(loss), 'green'))
+                    print(col("Iter " + str(step) + ", Minibatch Loss= " +
+                              "{:.6f}".format(loss), 'g'))
             steps.append(step)
             losses.append(loss)
             if not (level == "word" and attention):
@@ -556,9 +553,9 @@ def main(model,
             if step % 500 == 1:
                 val_loss, val_acc = sess.run(
                     [cost, accuracy], feed_dict=val_dict)
-                print(colored("Validation Loss= " +
-                              "{:.6f}".format(val_loss) + ", Validation Accuracy= " +
-                              "{:.5f}".format(val_acc), "green"))
+                print(col("Validation Loss= " +
+                          "{:.6f}".format(val_loss) + ", Validation Accuracy= " +
+                          "{:.5f}".format(val_acc), "g"))
                 if val_acc > ultimate_accuracy:
                     ultimate_accuracy = val_acc
                     print(col("saving graph and metadata in " + save_path, "b"))
@@ -571,7 +568,7 @@ def main(model,
                     break
                 print(col((ultimate_accuracy, ultimate_steps), 'r'))
 
-        print(colored("Optimization Finished!", 'blue'))
+        print(col("Optimization Finished!", 'b'))
 
         # test
         print(col("restoring from " + save_path + "/model", "b"))
@@ -581,8 +578,8 @@ def main(model,
             [accuracy, cost], feed_dict=test_dict)
         f.write("Test result: Loss= " + "{:.6f}".format(test_loss) +
                 ", Accuracy= " + "{:.5f}\n".format(test_acc))
-        print(colored("Test result: Loss= " + "{:.6f}".format(test_loss) +
-                      ", Accuracy= " + "{:.5f}".format(test_acc), "green"))
+        print(col("Test result: Loss= " + "{:.6f}".format(test_loss) +
+                  ", Accuracy= " + "{:.5f}".format(test_acc), "g"))
         f.close()
 
     # what follow is for the single pass
@@ -608,7 +605,7 @@ def main(model,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="bAbI Task")
+        description="babi task")
     parser.add_argument('--gpu', help='comma separated list of GPU(s) to use.')
     parser.add_argument("model", default='LSTM',
                         help='Model name: LSTM, EUNN, GRU, GORU')
