@@ -16,7 +16,7 @@ import datetime
 from utils import *
 
 from tensorflow.contrib.rnn import BasicLSTMCell, BasicRNNCell, GRUCell
-from RUM import RUMCell
+from RUM import RUMCell, rotate
 from baselineModels.GORU import GORUCell
 from baselineModels.EUNN import EUNNCell
 
@@ -196,8 +196,11 @@ def word_model(cell,
 
 def attention_sentence(rnn_outputs,
                        n_hidden,
+                       n_embed,
                        story_maxlen,
-                       eps=1e-12):
+                       attn_rum,
+                       encoded_question,
+                       eps=1e-12,):
     """ the attention mechansim for the 'sentence' level """
 
     with tf.variable_scope("attention"):
@@ -211,6 +214,17 @@ def attention_sentence(rnn_outputs,
         weighted_outputs = alphas * rnn_out
         context = tf.reduce_sum(weighted_outputs, axis=1)
 
+        if attn_rum:
+            embed_init_val = np.sqrt(6.) / np.sqrt(n_embed + n_hidden)
+            embed = tf.get_variable('embed_q', [n_embed, n_hidden],
+                                    initializer=tf.random_normal_initializer(
+                -embed_init_val, embed_init_val), dtype=tf.float32)
+            tmp_enc_q = tf.reshape(encoded_question, [-1, n_embed])
+            tmp_matmul = tf.matmul(tmp_enc_q, embed)
+            embedded_q = tf.reshape(tmp_matmul, [-1, n_hidden])
+            final_h = rotate(embedded_q, context, hidden_question)
+            n_hidden_output = n_hidden
+
         final_h = tf.concat([context, hidden_question], axis=1)
         n_hidden_output = 2 * n_hidden
 
@@ -222,7 +236,8 @@ def sentence_model(cell,
                    n_embed,
                    attention,
                    vocab_size,
-                   story_maxlen):
+                   story_maxlen,
+                   attn_rum):
     """ defining the NN core for the sentence level.
         this code is deprecated (needs further resarch).
     """
@@ -261,7 +276,7 @@ def sentence_model(cell,
     else:
         # attention mechanism
         final_h, n_hidden_output = attention_sentence(
-            rnn_outputs, n_hidden, story_maxlen)
+            rnn_outputs, n_hidden, n_embed, story_maxlen, attn_rum, encoded_question)
 
     # hidden layer to output
     V_init_val = np.sqrt(6.) / np.sqrt(n_hidden_output + n_input)
@@ -294,7 +309,8 @@ def nn_model(cell,
              n_embed,
              vocab_size,
              story_maxlen,
-             query_maxlen):
+             query_maxlen,
+             attn_rum):
     """ constructs the core NN model """
 
     if level == "word":
@@ -303,7 +319,7 @@ def nn_model(cell,
     elif level == "sentence":
         cost, accuracy, input_story, question, \
             answer_holder = sentence_model(
-                cell, n_hidden, n_embed, attention, vocab_size, story_maxlen)
+                cell, n_hidden, n_embed, attention, vocab_size, story_maxlen, attn_rum)
     else:
         raise
     return cost, accuracy, input_story, question, answer_holder
@@ -327,7 +343,8 @@ def main(model,
          activation,
          lambd,
          layer_norm,
-         zoneout):
+         zoneout,
+         attn_rum):
     """ assembles the model, trains and then evaluates. """
 
     # preprocessing
@@ -449,7 +466,8 @@ def main(model,
                                                                     n_embed,
                                                                     vocab_size,
                                                                     story_maxlen,
-                                                                    query_maxlen)
+                                                                    query_maxlen,
+                                                                    attn_rum)
 
     # initialization
     tf.summary.scalar('cost', cost)
@@ -467,6 +485,7 @@ def main(model,
         ("A" + activation + "_" if activation else "") + \
         ("U_" if update_gate and model == "RUM" else "") + \
         ("Z_" if zoneout and model == "RUM" else "") + \
+        ("RA_" if attn_rum and model == "RUM" else "") + \
         ("ln_" if layer_norm and model == "RUM" else "") + \
         (str(capacity) if model in ["EUNN", "GORU"] else "") + \
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
@@ -644,6 +663,8 @@ if __name__ == "__main__":
                         type=str, help='is there zoneout?')
     parser.add_argument('--single_pass', default=0,
                         type=bool, help='single pass evaluation?')
+    parser.add_argument('--attn_rum', '-RA', default="False",
+                        type=str, help='attention RUM?')
 
     args = parser.parse_args()
     dicts = vars(args)
@@ -677,6 +698,7 @@ if __name__ == "__main__":
         'lambd': dicts['lambd'],
         'layer_norm': dicts['layer_norm'],
         'zoneout': dicts['zoneout'],
+        'attn_rum': dicts['attn_rum']
     }
     sp = args.single_pass
 
