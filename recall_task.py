@@ -22,9 +22,8 @@ from baselineModels.EUNN import EUNNCell
 
 
 def recall_data(T, n_data):
-	"""
-	Creates the recall data.
-	"""
+    """ Creates the recall data. """
+
     # character
     n_category = int(T // 2)
 
@@ -37,7 +36,6 @@ def recall_data(T, n_data):
     # number
     input2 = np.random.randint(
         n_category + 1, high=n_category + 11, size=(n_data, T // 2))
-
     # question mark
     input3 = np.zeros((n_data, 2))
     seq = np.stack([input1, input2], axis=2)
@@ -76,15 +74,16 @@ def main(
         comp,
         FFT,
         learning_rate,
-        decay,
-        learning_rate_decay,
         norm,
-        grid_name,
-        activation):
-    learning_rate = float(learning_rate)
-    decay = float(decay)
+        update_gate,
+        activation,
+        lambd,
+        layer_norm,
+        zoneout):
 
-    # --- Set data params ----------------
+    learning_rate = float(learning_rate)
+
+    # data params
     n_input = int(T / 2) + 10 + 1
     n_output = 10
     n_train = 100000
@@ -94,59 +93,54 @@ def main(
     n_steps = T + 3
     n_classes = 10
 
-    # --- Create graph and compute gradients ----------------------
+    # graph and gradients
     x = tf.placeholder("int32", [None, n_steps])
     y = tf.placeholder("int64", [None])
 
     input_data = tf.one_hot(x, n_input, dtype=tf.float32)
 
-    # --- Input to hidden layer ----------------------
+    # input to hidden
     if model == "LSTM":
         cell = BasicLSTMCell(n_hidden, state_is_tuple=True, forget_bias=1)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
     elif model == "GRU":
-        cell = GRUCell(n_hidden)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+        cell = GRUCell(
+            n_hidden, kernel_initializer=tf.orthogonal_initializer())
     elif model == "RUM":
         if activation == "relu":
-            act = relu
+            act = tf.nn.relu
         elif activation == "sigmoid":
-            act = sigmoid
+            act = tf.nn.sigmoid
         elif activation == "tanh":
-            act = tanh
+            act = tf.nn.tanh
         elif activation == "softsign":
-            act = softsign
-        cell = RUMCell(n_hidden, T_norm=norm, activation=act)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
-        """
-		hidden_out = hidden_out[:,:,:50]
-		costh = hidden_out[:,:,-1]
-		print(colored(hidden_out,'red'))
-		print(colored(costh, 'green'))
-		
-		costh_mean_dist = tf.reduce_mean(costh, axis=0)
-		costh_hist = tf.summary.histogram('costh',costh_mean_dist)
-		print(colored(costh_normalized_dist,'yellow'))
-		"""
-
-    elif model == "ARUM":
-        cell = ARUMCell(n_hidden, T_norm=norm)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
-    elif model == "ARUM2":
-        cell = ARUM2Cell(n_hidden, T_norm=norm)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
-    elif model == "RNN":
-        cell = BasicRNNCell(n_hidden)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+            act = tf.nn.softsign
+        cell = cell = RUMCell(n_hidden,
+                              eta_=norm,
+                              update_gate=update_gate,
+                              lambda_=lambd,
+                              activation=act,
+                              use_layer_norm=layer_norm,
+                              use_zoneout=zoneout)
     elif model == "EUNN":
         cell = EUNNCell(n_hidden, capacity, FFT, comp)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
     elif model == "GORU":
         cell = GORUCell(n_hidden, capacity, FFT)
-        hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+    elif model == "RNN":
+        cell = BasicRNNCell(n_hidden)
 
-    # --- Hidden Layer to Output ----------------------
-    # important `tanh` prevention from blow up
+    hidden_out, _ = tf.nn.dynamic_rnn(cell, input_data, dtype=tf.float32)
+
+    # RESEARCH RELATED
+    # hidden_out = hidden_out[:,:,:50]
+    # costh = hidden_out[:,:,-1]
+    # print(colored(hidden_out,'red'))
+    # print(colored(costh, 'green'))
+
+    # costh_mean_dist = tf.reduce_mean(costh, axis=0)
+    # costh_hist = tf.summary.histogram('costh',costh_mean_dist)
+    # print(colored(costh_normalized_dist,'yellow'))
+
+    # hidden to output
     V_init_val = np.sqrt(6.) / np.sqrt(n_output + n_input)
 
     V_weights = tf.get_variable("V_weights", shape=[
@@ -158,64 +152,63 @@ def main(
     temp_out = tf.matmul(hidden_out, V_weights)
     output_data = tf.nn.bias_add(temp_out, V_bias)
 
-    # --- evaluate process ----------------------
+    # evaluate process
     cost = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
         logits=output_data, labels=y))
+    tf.summary.scalar('cost', cost)
     correct_pred = tf.equal(tf.argmax(output_data, 1), y)
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+    tf.summary.scalar('accuracy', accuracy)
 
-    # --- Initialization ----------------------
+    # initialization
     optimizer = tf.train.AdamOptimizer(
         learning_rate=learning_rate).minimize(cost)
     init = tf.global_variables_initializer()
 
-    print("\n###")
-    sumz = 0
-    for i in tf.global_variables():
-        print(i.name, i.shape, np.prod(np.array(i.get_shape().as_list())))
-        sumz += np.prod(np.array(i.get_shape().as_list()))
-    print("# parameters: ", sumz)
-    print("###\n")
+    # save
+    filename = model + "_H" + str(n_hidden) + "_" + \
+        ("L" + str(lambd) + "_" if lambd else "") + \
+        ("E" + str(eta) + "_" if norm else "") + \
+        ("A" + activation + "_" if activation else "") + \
+        ("U_" if update_gate else "") + \
+        ("Z_" if zoneout and model == "RUM" else "") + \
+        ("ln_" if layer_norm and model == "RUM" else "") + \
+        (str(capacity) if model in ["EUNN", "GORU"] else "") + \
+        ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
+        "B" + str(n_batch)
+    save_path = os.path.join('train_log', 'recall', 'T' + str(T), filename)
 
-    folder = "./output/recall/T=" + str(T) + '/' + model
-    filename = folder + "_h=" + str(n_hidden)
-    filename = filename + "_lr=" + str(learning_rate)
-    filename = filename + "_norm=" + str(norm)
-    filename = filename + ".txt"
-    if not os.path.exists(os.path.dirname(filename)):
+    file_manager(save_path)
+
+    # what follows is task specific
+    filepath = os.path.join(save_path, "eval.txt")
+    if not os.path.exists(os.path.dirname(filepath)):
         try:
-            os.makedirs(os.path.dirname(filename))
-        except OSError as exc:  # Guard against race condition
-            if exc.errno != errno.EEXIST:
-                raise
-    if not os.path.exists(os.path.dirname(folder + "/modelCheckpoint/")):
-        try:
-            print(folder + "/modelCheckpoint/")
-            os.makedirs(os.path.dirname(folder + "/modelCheckpoint/"))
+            os.makedirs(os.path.dirname(filepath))
         except OSError as exc:
             if exc.errno != errno.EEXIST:
                 raise
-    f = open(filename, 'w')
-    f.write("########\n\n")
-    f.write("## \tModel: %s with N=%d" % (model, n_hidden))
-    f.write("########\n\n")
+    f = open(filepath, 'w')
+    f.write(col("validation \n", 'r'))
 
-    # --- Training Loop ----------------------
+    log(kwargs, save_path)
+
+    merged_summary = tf.summary.merge_all()
     saver = tf.train.Saver()
-    mx2 = 0
+
+    parameters_profiler()
+
+    # train
+    saver = tf.train.Saver()
     step = 0
 
     train_x, train_y = recall_data(T, n_train)
     val_x, val_y = recall_data(T, n_valid)
     test_x, test_y = recall_data(T, n_test)
 
-    with tf.Session(config=tf.ConfigProto(log_device_placement=False,
-                                          allow_soft_placement=False)) as sess:
-        merged = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(
-            "./logs/recall/" + grid_name, sess.graph)
-
+    with tf.Session() as sess:
         sess.run(init)
+        train_writer = tf.summary.FileWriter(save_path, sess.graph)
 
         steps = []
         losses = []
@@ -224,57 +217,55 @@ def main(
         while step < n_iter:
             batch_x, batch_y = next_batch(train_x, train_y, step, n_batch)
 
+            # RESEARCH RELATED
             # acc, loss = \
             # sess.run([accuracy, cost], feed_dict={x: batch_x, y: batch_y})
             # costh_val = sess.run([costh], feed_dict={x: batch_x, y: batch_y})
             # print(colored(costh_val,'green'))
             # print(colored("###",'yellow'))
             # acc, loss, costh_h = \
-            # sess.run([accuracy, cost, costh_hist], feed_dict={x: batch_x, y: batch_y})
-            acc, loss = sess.run([accuracy, cost], feed_dict={
-                                 x: batch_x, y: batch_y})
-            # writer.add_summary(costh_h, step)
+            # sess.run([accuracy, cost, costh_hist], feed_dict={x: batch_x, y:
+            # batch_y})
 
-            print("Iter " + str(step) + ", Minibatch Loss= " +
-                  "{:.6f}".format(loss) + ", Training Accuracy= " +
-                  "{:.5f}".format(acc))
+            acc, loss = sess.run([accuracy, cost], feed_dict={
+                x: batch_x, y: batch_y})
+            # writer.add_summary(costh_h, step) # RESEARCH RELATED
+
+            print(col("Iter " + str(step) + ", Minibatch Loss= " +
+                      "{:.6f}".format(loss) + ", Training Accuracy= " +
+                      "{:.5f}".format(acc), 'g'))
             sess.run(optimizer, feed_dict={x: batch_x, y: batch_y})
 
             steps.append(step)
             losses.append(loss)
             accs.append(acc)
-            step += 1
-            if step % 1000 == 999:
+            if step % 1000 == 0:
+                summ = sess.run(merged_summary, feed_dict={x: val_x, y: val_y})
                 acc = sess.run(accuracy, feed_dict={x: val_x, y: val_y})
                 loss = sess.run(cost, feed_dict={x: val_x, y: val_y})
+                train_writer.add_summary(summ, step)
 
                 print("Validation Loss= " +
                       "{:.6f}".format(loss) + ", Validation Accuracy= " +
                       "{:.5f}".format(acc))
-                f.write("%d\t%f\t%f\n" % (step, loss, acc))
+                f.write(col("%d\t%f\t%f\n" % (step, loss, acc), 'y'))
+                f.flush
 
             if step % 1000 == 1:
+                print(col("saving graph and metadata in " + save_path, "b"))
+                saver.save(sess, os.path.join(save_path, "model"))
 
-                saver.save(sess, folder + "/modelCheckpoint/step=" + str(step))
-                # if model == "GRU": tmp = "gru"
-                # if model == "RUM": tmp = "RUM"
-                # if model == "EUNN": tmp = "eunn"
-                # if model == "GORU": tmp = "goru"
+            step += 1
 
-                # kernel = [v for v in tf.global_variables() if v.name == "rnn/" + tmp + "_cell/gates/kernel:0"][0]
-                # bias = [v for v in tf.global_variables() if v.name == "rnn/" + tmp + "_cell/gates/bias:0"][0]
-                # k, b = sess.run([kernel, bias])
-                # np.save(folder + "/kernel_" + str(step), k)
-                # np.save(folder + "/bias_" + str(step), b)
+        print(col("Optimization Finished!", 'b'))
 
-        print("Optimization Finished!")
-
-        # --- test ----------------------
-
+        # test
         test_acc = sess.run(accuracy, feed_dict={x: test_x, y: test_y})
         test_loss = sess.run(cost, feed_dict={x: test_x, y: test_y})
-        f.write("Test result: Loss= " + "{:.6f}".format(test_loss) +
-                ", Accuracy= " + "{:.5f}".format(test_acc))
+        f.write(col("Test result: Loss= " + "{:.6f}".format(test_loss) +
+                    ", Accuracy= " + "{:.5f}".format(test_acc), 'g'))
+
+        f.close()
 
 
 if __name__ == "__main__":
@@ -285,8 +276,6 @@ if __name__ == "__main__":
                         help='Model name: LSTM, EUNN, GRU, GORU')
     parser.add_argument('-T', type=int, default=50,
                         help='Information sequence length')
-    parser.add_argument('attention', type=str,
-                        default="False", help='is attn. mechn.')
     parser.add_argument('--n_iter', '-I', type=int,
                         default=10000, help='training iteration number')
     parser.add_argument('--n_batch', '-B', type=int,
@@ -326,7 +315,7 @@ if __name__ == "__main__":
 
     kwargs = {
         'model': dicts['model'],
-        'T': dict['T'],
+        'T': dicts['T'],
         'n_iter': dicts['n_iter'],
         'n_batch': dicts['n_batch'],
         'n_hidden': dicts['n_hidden'],
