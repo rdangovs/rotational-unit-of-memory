@@ -64,3 +64,40 @@ def file_manager(save_path):
         else:
             print(colored("Invalid key: exiting...", "blue"))
             exit()
+
+
+def generate_points_for_visualization(num_param, num_points, type_vis="linear", range_gen=10):
+    """ 
+    helper function that generates the plot of the energy landscape of the model. 
+    type_vis can be `linear` or `contour` 
+    """
+    points_collect = []
+    coordinates = []
+    if type_vis == "linear":
+        point_a = np.random.uniform(-range_gen,
+                                    range_gen, size=num_param)
+        point_b = np.random.uniform(-range_gen,
+                                    range_gen, size=num_param)
+        for i in range(num_points):
+            alpha = i / float(num_points)
+            coordinates.append(alpha)
+            points_collect.append(
+                (1 - alpha) * point_a + alpha * point_b)
+    elif type_vis == "contour":
+        point_ref = np.random.uniform(-range_gen,
+                                      range_gen, size=num_param)
+        point_delta = np.random.uniform(-range_gen,
+                                        range_gen, size=num_param)
+        point_nu = np.random.uniform(-range_gen,
+                                     range_gen, size=num_param)
+        for i in range(num_points):
+            for j in range(num_points):
+                alpha = i / float(num_points)
+                beta = j / float(num_points)
+                points_collect.append(
+                    point_ref + alpha * point_delta + beta * point_nu)
+        for i in range(num_points):
+            alpha = i / float(num_points)
+            coordinates.append(alpha)
+    points_collect = np.stack(points_collect, axis=0)
+    return np.array(coordinates), points_collect

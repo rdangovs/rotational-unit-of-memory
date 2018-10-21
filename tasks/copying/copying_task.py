@@ -35,6 +35,28 @@ def copying_data(T, n_data, n_sequence):
     return x, y
 
 
+def process_vis(weights, num_points, n_hidden=100, cell="RUM"):
+    """
+    helper function for processing the placeholder weights for visualization
+    """
+    if cell == "RUM":
+        feed_temp_target = weights[
+            :, :(n_hidden + 10) * n_hidden]
+        feed_temp_target = np.reshape(feed_temp_target,
+                                      (num_points, n_hidden + 10, n_hidden))
+        feed_temp_target_bias = weights[
+            :, (n_hidden + 10) * n_hidden:(n_hidden + 10) * n_hidden + n_hidden]
+        # no need for reshape
+        feed_temp_embed = weights[:, - 10 * n_hidden:]
+        feed_temp_embed = np.reshape(
+            feed_temp_embed, (num_points, 10, n_hidden))
+        return feed_temp_target, feed_temp_target_bias, feed_temp_embed
+    else:  # cell is either `eunn` or `goru`
+        feed_temp_theta0 = weights[:, :n_hidden // 2]
+        feed_temp_theta1 = weights[:, -(n_hidden // 2 - 1):]
+        return feed_temp_theta0, feed_temp_theta1
+
+
 def main(
         model,
         T,
@@ -75,35 +97,6 @@ def main(
 
     input_data = tf.one_hot(x, n_input, dtype=tf.float32)
 
-    if visualization_experiment:
-        def generate_points_for_visualization(num_param, num_points, type_vis="linear"):
-            """ helper function that generates the plot.
-                type_vis can be `linear` or `contour` 
-            """
-            points_collect = []
-            coordinates = []
-            if type_vis == "linear":
-                point_a = np.random.uniform(-10, 10, size=num_param)
-                point_b = np.random.uniform(-10, 10, size=num_param)
-                for i in range(num_points):
-                    alpha = i / float(num_points)
-                    coordinates.append(alpha)
-                    points_collect.append(
-                        (1 - alpha) * point_a + alpha * point_b)
-            elif type_vis == "contour":
-                point_ref = np.random.uniform(-10, 10, size=num_param)
-                point_delta = np.random.uniform(-10, 10, size=num_param)
-                point_nu = np.random.uniform(-10, 10, size=num_param)
-                for i in range(num_points):
-                    for j in range(num_points):
-                        alpha = i / float(num_points)
-                        beta = j / float(num_points)
-                        coordinates.append(alpha)
-                        points_collect.append(
-                            point_ref + alpha * point_delta + beta * point_nu)
-            points_collect = np.stack(points_collect, axis=0)
-            return np.array(coordinates), points_collect
-
     # input to hidden
     if model == "LSTM":
         cell = BasicLSTMCell(n_hidden, state_is_tuple=True, forget_bias=1)
@@ -138,9 +131,18 @@ def main(
                               temp_target_bias=temp_target_bias if visualization_experiment else None,
                               temp_embed=temp_embed if visualization_experiment else None)
     elif model == "EUNN":
-        cell = EUNNCell(n_hidden, capacity, FFT, comp)
+        if visualization_experiment:
+            # placeholder
+            temp_theta0 = tf.placeholder("float32", [n_hidden // 2])
+            temp_theta1 = tf.placeholder("float32", [n_hidden // 2 - 1])
+        cell = EUNNCell(n_hidden, capacity, FFT, comp, name="eunn")
     elif model == "GORU":
-        cell = GORUCell(n_hidden, capacity, FFT)
+        if visualization_experiment:
+            # placeholder
+            temp_theta0 = tf.placeholder("float32", [n_hidden // 2])
+            temp_theta1 = tf.placeholder("float32", [n_hidden // 2 - 1])
+        cell = GORUCell(n_hidden, capacity, FFT,
+                        temp_theta0=temp_theta0, temp_theta1=temp_theta1)
     elif model == "RNN":
         cell = BasicRNNCell(n_hidden)
 
@@ -221,32 +223,43 @@ def main(
             batch_y = train_y[step * n_batch: (step + 1) * n_batch]
             if visualization_experiment:
                 """ initiative to write simpler code """
-                def process_rum(weights, num_points):
-                    feed_temp_target = weights[:, :(n_hidden + 10) * n_hidden]
-                    feed_temp_target = np.reshape(feed_temp_target,
-                                                  (num_points, n_hidden + 10, n_hidden))
-                    feed_temp_target_bias = weights[
-                        :, (n_hidden + 10) * n_hidden:(n_hidden + 10) * n_hidden + n_hidden]
-                    # no need for reshape
-                    feed_temp_embed = weights[:, - 10 * n_hidden:]
-                    feed_temp_embed = np.reshape(
-                        feed_temp_embed, (num_points, 10, n_hidden))
-                    return feed_temp_target, feed_temp_target_bias, feed_temp_embed
+
+                if model == "RUM":
+                    number_of_weights = (n_hidden + 10) * \
+                        n_hidden + n_hidden + 10 * n_hidden
+                elif model in ["GORU", "EUNN"]:
+                    # assuming that n_hidden is even.
+                    number_of_weights = n_hidden - 1
 
                 print(col("strating linear visualization", 'b'))
-                num_points = 10
+                num_points = 200
+
                 coord, weights = generate_points_for_visualization(
-                    (n_hidden + 10) * n_hidden + n_hidden + 10 * n_hidden, num_points)
-                feed_temp_target, feed_temp_target_bias, feed_temp_embed = process_rum(
-                    weights, num_points)
+                    number_of_weights, num_points)
+
+                processed_placeholders = process_vis(
+                    weights, num_points, n_hidden=n_hidden, cell=model)
+                if model == "RUM":
+                    feed_temp_target, feed_temp_target_bias, feed_temp_embed = processed_placeholders
+
+                else:
+                    feed_temp_theta0, feed_temp_theta1 = processed_placeholders
+
                 collect_losses = []
                 for i in range(num_points):
-                    loss = sess.run(cost, feed_dict={
-                                    x: batch_x,
-                                    y: batch_y,
-                                    temp_target: feed_temp_target[i],
-                                    temp_target_bias: feed_temp_target_bias[i],
-                                    temp_embed: feed_temp_embed[i]})
+                    if model == "RUM":
+                        loss = sess.run(cost, feed_dict={x: batch_x,
+                                                         y: batch_y,
+                                                         temp_target: feed_temp_target[i],
+                                                         temp_target_bias: feed_temp_target_bias[i],
+                                                         temp_embed: feed_temp_embed[i]})
+                    elif model in ["EUNN", "GORU"]:
+                        loss = sess.run(cost, feed_dict={
+                                        x: batch_x,
+                                        y: batch_y,
+                                        temp_theta0: feed_temp_theta0[i],
+                                        temp_theta1: feed_temp_theta1[i]})
+
                     print(col("iter: " + str(i) + " loss: " + str(loss), 'y'))
                     collect_losses.append(loss)
                 np.save(os.path.join(save_path, "linear_height"),
@@ -255,34 +268,48 @@ def main(
                         np.array(coord))
                 print(col("done with linear visualization", 'b'))
 
+                #####################
+
                 print(col("strating contour visualization", 'b'))
-                num_points = 10
+                num_points = 20
                 coord, weights = generate_points_for_visualization(
-                    (n_hidden + 10) * n_hidden + n_hidden + 10 * n_hidden, num_points, type_vis="contour")
-                feed_temp_target, feed_temp_target_bias, feed_temp_embed = process_rum(
-                    weights, num_points ** 2)
+                    number_of_weights, num_points, type_vis="contour")
+                np.save(os.path.join(save_path, "contour_coord"),
+                        np.array(coord))
+                processed_placeholders = process_vis(
+                    weights, num_points ** 2, n_hidden=n_hidden, cell=model)
+                if model == "RUM":
+                    feed_temp_target, feed_temp_target_bias, feed_temp_embed = processed_placeholders
+                else:
+                    feed_temp_theta0, feed_temp_theta1 = processed_placeholders
+
                 collect_contour = np.empty((num_points, num_points))
                 for i in range(num_points):
                     for j in range(num_points):
-                        loss = sess.run(cost, feed_dict={
-                                        x: batch_x,
-                                        y: batch_y,
-                                        temp_target: feed_temp_target[i * num_points + j],
-                                        temp_target_bias: feed_temp_target_bias[i * num_points + j],
-                                        temp_embed: feed_temp_embed[i * num_points + j]})
+                        if model == "RUM":
+                            loss = sess.run(cost, feed_dict={
+                                x: batch_x,
+                                y: batch_y,
+                                temp_target: feed_temp_target[i * num_points + j],
+                                temp_target_bias: feed_temp_target_bias[i * num_points + j],
+                                temp_embed: feed_temp_embed[i * num_points + j]})
+                        elif model in ["GORU", "EUNN"]:
+                            loss = sess.run(cost, feed_dict={
+                                x: batch_x,
+                                y: batch_y,
+                                temp_theta0: feed_temp_theta0[i * num_points + j],
+                                temp_theta1: feed_temp_theta1[i * num_points + j]})
                         collect_contour[i, j] = loss
                         print(col("iter: " + str(i) + "," +
                                   str(j) + " loss: " + str(loss), 'y'))
                 np.save(os.path.join(save_path, "contour_height"),
                         np.array(collect_contour))
-                np.save(os.path.join(save_path, "contour_coord"),
-                        np.array(coord))
 
                 print(col("exiting visualization experiment", 'r'))
                 exit()
 
             summ, acc, loss = sess.run([merged_summary, accuracy, cost], feed_dict={
-                                       x: batch_x, y: batch_y})
+                x: batch_x, y: batch_y})
             train_writer.add_summary(summ, step)
             sess.run(optimizer, feed_dict={x: batch_x, y: batch_y})
             print(col("Iter " + str(step) + ", Minibatch Loss: " +

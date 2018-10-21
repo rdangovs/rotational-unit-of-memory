@@ -15,7 +15,7 @@ from modrelu import modrelu
 from termcolor import colored
 
 
-def _eunn_param(hidden_size, capacity=2, fft=False, comp=True, name=None):
+def _eunn_param(hidden_size, capacity=2, fft=False, comp=True, name="eunn"):
     """
     Create parameters and do the initial preparations
     """
@@ -279,7 +279,6 @@ def _eunn_loop(state, capacity, diag_vec_list, off_vec_list, diag, fft):
         def even_input(off, size):
 
             def even_s(off, size):
-                print(colored(off, 'red'))
                 off = array_ops.reshape(off, [-1, size // 2, 2])
                 off = array_ops.reshape(
                     array_ops.reverse(off, [2]), [-1, size])
