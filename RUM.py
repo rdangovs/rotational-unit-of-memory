@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-import auxiliary as aux
+import baselineModels.auxiliary as aux
 
 from tensorflow.python.util.tf_export import tf_export
 from tensorflow.python.ops.rnn_cell_impl import RNNCell
@@ -120,7 +120,12 @@ class RUMCell(RNNCell):
                  # and further research
                  update_gate=True,
                  trainable_rot=True,
-                 track_angle=False
+                 track_angle=False,
+                 # research on visualization
+                 visualization=False,
+                 temp_target=None,
+                 temp_target_bias=None,
+                 temp_embed=None
                  ):
         """RUM init
 
@@ -139,6 +144,10 @@ class RUMCell(RNNCell):
                 update_gate: use update gate, True or False
                 trainable_rot: use trainable rotation, True or False,
                 track_angle: keep track of the angle, True or False
+                visualization: whether to visualize the energy landscape
+                temp_target: a placeholder to feed in for visualization 
+                temp_target_bias: a placeholder to feed in for visualization
+                temp_embed: a placeholder to feed in for visualization
         """
         super(RUMCell, self).__init__(_reuse=reuse)
         self._hidden_size = hidden_size
@@ -160,6 +169,10 @@ class RUMCell(RNNCell):
         self._update_gate = update_gate
         self._trainable_rot = trainable_rot
         self._track_angle = track_angle
+        self._visualization = visualization
+        self._temp_target = temp_target
+        self._temp_target_bias = temp_target_bias
+        self._temp_embed = temp_embed
 
     @property
     def state_size(self):
@@ -186,12 +199,16 @@ class RUMCell(RNNCell):
             if self._bias_initializer is None:
                 dtype = [a.dtype for a in [inputs, state]][0]
                 bias_ones = tf.constant_initializer(1.0, dtype=dtype)
-            r = fully_connected(inputs=tf.concat([inputs, state], axis=1),
-                                num_outputs=self._hidden_size,
-                                activation_fn=None,
-                                biases_initializer=bias_ones,
-                                weights_initializer=aux.rum_ortho_initializer(),
-                                trainable=self._trainable_rot)
+            if self._visualization:
+                r = tf.matmul(
+                    tf.concat([inputs, state], axis=1), self._temp_target) + self._temp_target_bias
+            else:
+                r = fully_connected(inputs=tf.concat([inputs, state], axis=1),
+                                    num_outputs=self._hidden_size,
+                                    activation_fn=None,
+                                    biases_initializer=bias_ones,
+                                    weights_initializer=aux.rum_ortho_initializer(),
+                                    trainable=self._trainable_rot)
             # no update gate if there is no update gate
             if self._update_gate:
                 u = fully_connected(inputs=tf.concat([inputs, state], axis=1),
@@ -210,12 +227,15 @@ class RUMCell(RNNCell):
                     r = aux.layer_norm_all(
                         r, 1, self._hidden_size, "ln_r")
         with tf.variable_scope("candidate"):
-            x_emb = fully_connected(inputs=inputs,
-                                    num_outputs=self._hidden_size,
-                                    activation_fn=None,
-                                    biases_initializer=self._bias_initializer,
-                                    weights_initializer=self._kernel_initializer,
-                                    trainable=True)
+            if self._visualization:
+                x_emb = tf.matmul(inputs, self._temp_embed)
+            else:
+                x_emb = fully_connected(inputs=inputs,
+                                        num_outputs=self._hidden_size,
+                                        activation_fn=None,
+                                        biases_initializer=self._bias_initializer,
+                                        weights_initializer=self._kernel_initializer,
+                                        trainable=True)
             if self._lambda == 0:
                 state_new, costh = rotate(x_emb, r, state)
             else:
