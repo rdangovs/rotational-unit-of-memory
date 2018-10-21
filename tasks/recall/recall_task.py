@@ -21,6 +21,29 @@ from baselineModels.GORU import GORUCell
 from baselineModels.EUNN import EUNNCell
 
 
+def process_vis(weights, num_points, n_hidden=100, cell="RUM"):
+    """
+    helper function for processing the placeholder weights for visualization
+    36 is for T=50
+    """
+    if cell == "RUM":
+        feed_temp_target = weights[
+            :, :(n_hidden + 36) * n_hidden]
+        feed_temp_target = np.reshape(feed_temp_target,
+                                      (num_points, n_hidden + 36, n_hidden))
+        feed_temp_target_bias = weights[
+            :, (n_hidden + 36) * n_hidden:(n_hidden + 36) * n_hidden + n_hidden]
+        # no need for reshape
+        feed_temp_embed = weights[:, - 36 * n_hidden:]
+        feed_temp_embed = np.reshape(
+            feed_temp_embed, (num_points, 36, n_hidden))
+        return feed_temp_target, feed_temp_target_bias, feed_temp_embed
+    else:  # cell is either `eunn` or `goru`
+        feed_temp_theta0 = weights[:, :n_hidden // 2]
+        feed_temp_theta1 = weights[:, -(n_hidden // 2 - 1):]
+        return feed_temp_theta0, feed_temp_theta1
+
+
 def recall_data(T, n_data):
     """ Creates the recall data. """
 
@@ -79,12 +102,14 @@ def main(
         activation,
         lambd,
         layer_norm,
-        zoneout):
+        zoneout,
+        visualization_experiment):
 
     learning_rate = float(learning_rate)
 
     # data params
     n_input = int(T / 2) + 10 + 1
+
     n_output = 10
     n_train = 100000
     n_valid = 10000
@@ -114,17 +139,34 @@ def main(
             act = tf.nn.tanh
         elif activation == "softsign":
             act = tf.nn.softsign
+        if visualization_experiment:
+            # placeholder
+            temp_target = tf.placeholder(
+                "float32", [n_hidden + n_input, n_hidden])
+            temp_target_bias = tf.placeholder("float32", [n_hidden])
+            temp_embed = tf.placeholder("float32", [n_input, n_hidden])
+
         cell = cell = RUMCell(n_hidden,
                               eta_=norm,
                               update_gate=update_gate,
                               lambda_=lambd,
                               activation=act,
                               use_layer_norm=layer_norm,
-                              use_zoneout=zoneout)
+                              use_zoneout=zoneout,
+                              visualization=visualization_experiment,
+                              temp_target=temp_target if visualization_experiment else None,
+                              temp_target_bias=temp_target_bias if visualization_experiment else None,
+                              temp_embed=temp_embed if visualization_experiment else None)
+
     elif model == "EUNN":
         cell = EUNNCell(n_hidden, capacity, FFT, comp)
     elif model == "GORU":
-        cell = GORUCell(n_hidden, capacity, FFT)
+        if visualization_experiment:
+            # placeholder
+            temp_theta0 = tf.placeholder("float32", [n_hidden // 2])
+            temp_theta1 = tf.placeholder("float32", [n_hidden // 2 - 1])
+        cell = GORUCell(n_hidden, capacity, FFT,
+                        temp_theta0=temp_theta0, temp_theta1=temp_theta1)
     elif model == "RNN":
         cell = BasicRNNCell(n_hidden)
 
@@ -176,7 +218,8 @@ def main(
         (str(capacity) if model in ["EUNN", "GORU"] else "") + \
         ("FFT_" if model in ["EUNN", "GORU"] and FFT else "") + \
         "B" + str(n_batch)
-    save_path = os.path.join('train_log', 'recall', 'T' + str(T), filename)
+    save_path = os.path.join(
+        '../../train_log', 'recall', 'T' + str(T), filename)
 
     file_manager(save_path)
 
@@ -226,6 +269,97 @@ def main(
             # acc, loss, costh_h = \
             # sess.run([accuracy, cost, costh_hist], feed_dict={x: batch_x, y:
             # batch_y})
+
+            ##############
+
+            if visualization_experiment:
+                """ initiative to write simpler code """
+
+                if model == "RUM":
+                    number_of_weights = (n_hidden + n_input) * \
+                        n_hidden + n_hidden + n_input * n_hidden
+                elif model in ["GORU", "EUNN"]:
+                    # assuming that n_hidden is even.
+                    number_of_weights = n_hidden - 1
+
+                print(col("strating linear visualization", 'b'))
+                num_points = 200
+
+                coord, weights = generate_points_for_visualization(
+                    number_of_weights, num_points)
+
+                processed_placeholders = process_vis(
+                    weights, num_points, n_hidden=n_hidden, cell=model)
+                if model == "RUM":
+                    feed_temp_target, feed_temp_target_bias, feed_temp_embed = processed_placeholders
+
+                else:
+                    feed_temp_theta0, feed_temp_theta1 = processed_placeholders
+
+                collect_losses = []
+                for i in range(num_points):
+                    if model == "RUM":
+                        loss = sess.run(cost, feed_dict={x: batch_x,
+                                                         y: batch_y,
+                                                         temp_target: feed_temp_target[i],
+                                                         temp_target_bias: feed_temp_target_bias[i],
+                                                         temp_embed: feed_temp_embed[i]})
+                    elif model in ["EUNN", "GORU"]:
+                        loss = sess.run(cost, feed_dict={
+                                        x: batch_x,
+                                        y: batch_y,
+                                        temp_theta0: feed_temp_theta0[i],
+                                        temp_theta1: feed_temp_theta1[i]})
+
+                    print(col("iter: " + str(i) + " loss: " + str(loss), 'y'))
+                    collect_losses.append(loss)
+                np.save(os.path.join(save_path, "linear_height"),
+                        np.array(collect_losses))
+                np.save(os.path.join(save_path, "linear_coord"),
+                        np.array(coord))
+                print(col("done with linear visualization", 'b'))
+
+                #####################
+
+                print(col("strating contour visualization", 'b'))
+                num_points = 20
+                coord, weights = generate_points_for_visualization(
+                    number_of_weights, num_points, type_vis="contour")
+                np.save(os.path.join(save_path, "contour_coord"),
+                        np.array(coord))
+                processed_placeholders = process_vis(
+                    weights, num_points ** 2, n_hidden=n_hidden, cell=model)
+                if model == "RUM":
+                    feed_temp_target, feed_temp_target_bias, feed_temp_embed = processed_placeholders
+                else:
+                    feed_temp_theta0, feed_temp_theta1 = processed_placeholders
+
+                collect_contour = np.empty((num_points, num_points))
+                for i in range(num_points):
+                    for j in range(num_points):
+                        if model == "RUM":
+                            loss = sess.run(cost, feed_dict={
+                                x: batch_x,
+                                y: batch_y,
+                                temp_target: feed_temp_target[i * num_points + j],
+                                temp_target_bias: feed_temp_target_bias[i * num_points + j],
+                                temp_embed: feed_temp_embed[i * num_points + j]})
+                        elif model in ["GORU", "EUNN"]:
+                            loss = sess.run(cost, feed_dict={
+                                x: batch_x,
+                                y: batch_y,
+                                temp_theta0: feed_temp_theta0[i * num_points + j],
+                                temp_theta1: feed_temp_theta1[i * num_points + j]})
+                        collect_contour[i, j] = loss
+                        print(col("iter: " + str(i) + "," +
+                                  str(j) + " loss: " + str(loss), 'y'))
+                np.save(os.path.join(save_path, "contour_height"),
+                        np.array(collect_contour))
+
+                print(col("exiting visualization experiment", 'r'))
+                exit()
+
+            ##############
 
             acc, loss = sess.run([accuracy, cost], feed_dict={
                 x: batch_x, y: batch_y})
@@ -300,6 +434,8 @@ if __name__ == "__main__":
                         type=str, help='is there layer normalization?')
     parser.add_argument('--zoneout', '-Z', default="False",
                         type=str, help='is there zoneout?')
+    parser.add_argument('--visualization_experiment', '-VE', default="False",
+                        type=str, help='is there experiment?')
 
     args = parser.parse_args()
     dicts = vars(args)
@@ -329,6 +465,7 @@ if __name__ == "__main__":
         'lambd': dicts['lambd'],
         'layer_norm': dicts['layer_norm'],
         'zoneout': dicts['zoneout'],
+        'visualization_experiment': dicts['visualization_experiment']
     }
 
     main(**kwargs)
