@@ -15,17 +15,20 @@
 
 import time
 import sys
+import os
 from termcolor import colored
 
 import tensorflow as tf
 
 import auxiliary as aux
 import reader
-import ptb_configs as configs
+import configs
 
 from baselineModels import LNLSTM
 from baselineModels import FSRNN, GORU, EUNN
 from tensorflow.contrib.rnn import MultiRNNCell
+
+from utils import *
 
 import RUM
 
@@ -35,11 +38,36 @@ flags = tf.flags
 flags.DEFINE_string(
     "model", "ptb",
     "A type of model. Check configs file to know which models are available.")
-flags.DEFINE_string("data_path", 'data/',
+flags.DEFINE_string("data_path", '../../data/',
                     "Where the training/test data is stored.")
-flags.DEFINE_string("save_path", 'models/ptb/RUM_test/',
+flags.DEFINE_string("save_path", '../../train_log/ptb/',
                     "Model output directory.")
+flags.DEFINE_string("gpu", None,
+                    "Using GPUs.")
+flags.DEFINE_string(
+    "mode", "train",
+    "A type of mode. Train or test.")
+flags.DEFINE_string(
+    "restore", "False",
+    "Restore? True or False?")
+flags.DEFINE_boolean(
+    "parameters", False,
+    "Show # parameters")
+flags.DEFINE_integer(
+    "fast_size", None,
+    "hidden size of the fast cell")
+flags.DEFINE_float(
+    "eta", None,
+    "eta for time normalization")
+
+
 FLAGS = flags.FLAGS
+FLAGS.save_path = os.path.join(FLAGS.save_path, FLAGS.model)
+file_manager(FLAGS.save_path)
+
+
+if FLAGS.gpu:
+    os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu
 
 
 class PTBInput(object):
@@ -64,7 +92,7 @@ class PTBModel(object):
         num_steps = input_.num_steps
         emb_size = config.embed_size
         vocab_size = config.vocab_size
-        F_size = config.cell_size
+        F_size = FLAGS.fast_size if FLAGS.fast_size else config.cell_size
         if config.cell not in ["rum", "lstm"]:
             S_size = config.hyper_size
 
@@ -85,24 +113,35 @@ class PTBModel(object):
                                         zoneout_keep_h=config.zoneout_h, zoneout_keep_c=config.zoneout_c)
         elif config.cell == "fs-rum":
             S_cell = RUM.RUMCell(S_size,
-                                 eta_=config.T_norm,
+                                 # eta_=config.T_norm,
+                                 eta=FLAGS.eta,
                                  use_zoneout=config.use_zoneout,
                                  use_layer_norm=config.use_layer_norm,
                                  is_training=is_training)
-            # update_gate=update_gate,
-            # lambda_=lambd,
-            # activation=act) # room for experiments
         elif config.cell == "fs-goru":
             with tf.variable_scope("goru"):
                 S_cell = GORU.GORUCell(hidden_size=S_size)
         # test pure RUM/LSTM models (room for experiments)
         if config.cell == "rum":
+            if config.activation == "tanh":
+                act = tf.nn.tanh
+            elif config.activation == "sigmoid":
+                act = tf.nn.sigmoid
+            elif config.activation == "softsign":
+                act = tf.nn.softsign
+            elif config.activation == "relu":
+                act = tf.nn.relu
+
             def rum_cell():
                 return RUM.RUMCell(F_size,
-                                   eta_=config.T_norm,
+                                   # eta_=config.T_norm,
+                                   eta_=FLAGS.eta,
                                    use_zoneout=config.use_zoneout,
                                    use_layer_norm=config.use_layer_norm,
-                                   is_training=is_training)
+                                   is_training=is_training,
+                                   update_gate=config.update_gate,
+                                   lambda_=0,
+                                   activation=act)
             mcell = MultiRNNCell([rum_cell() for _ in range(
                 config.num_layers)], state_is_tuple=True)
             self._initial_state = mcell.zero_state(batch_size, tf.float32)
@@ -265,6 +304,8 @@ def main(_):
                 m = PTBModel(is_training=True, config=config,
                              input_=train_input)
 
+        parameters_profiler()
+
         with tf.name_scope("Valid"):
             valid_input = PTBInput(
                 config=config, data=valid_data, name="ValidInput")
@@ -279,50 +320,70 @@ def main(_):
                 mtest = PTBModel(is_training=False, config=eval_config,
                                  input_=test_input)
 
-        merged_summary = tf.summary.merge_all()
+        # merged_summary = tf.summary.merge_all()
         saver = tf.train.Saver(tf.trainable_variables())
 
         with tf.Session() as session:
-            train_writer = tf.summary.FileWriter(save_path, sess.graph)
             session.run(tf.global_variables_initializer())
             coord = tf.train.Coordinator()
+            # train_writer = tf.summary.FileWriter(FLAG.save_path, session.graph)
             threads = tf.train.start_queue_runners(sess=session, coord=coord)
-            #saver.restore(session, FLAGS.save_path + 'model.ckpt')
-            previous_val = 9999
-            for i in range(config.max_max_epoch):
-                lr_decay = config.lr_decay ** max(i +
-                                                  1 - config.max_epoch, 0.0)
-                m.assign_lr(session, config.learning_rate * lr_decay)
+            if FLAGS.restore == "True":
+                saver.restore(session, os.path.join(
+                    FLAGS.save_path, 'model.ckpt'))
+            if FLAGS.mode == "train":
+                previous_val = 9999
+                if FLAGS.restore == "True":
+                    f = open(FLAGS.save_path + 'train-and-valid.txt', 'r')
+                    x = f.readlines()[2]
+                    x = x.rstrip()
+                    x = x.split(" ")
+                    previous_val = float(x[1])
+                    print(colored("previous validation is %f\n" %
+                                  (previous_val), "green"))
+                    f.close()
+                for i in range(config.max_max_epoch):
+                    lr_decay = config.lr_decay ** max(i +
+                                                      1 - config.max_epoch, 0.0)
+                    m.assign_lr(session, config.learning_rate * lr_decay)
 
-                print(colored("Epoch: %d Learning rate: %.3f" %
-                              (i + 1, session.run(m.lr)), "green"))
-                train_perplexity = run_epoch(
-                    session, m, eval_op=m.train_op, verbose=True)
-                print(colored("Epoch: %d Train BPC: %.4f" %
-                              (i + 1, train_perplexity), "green"))
-                valid_perplexity = run_epoch(session, mvalid)
-                print(colored("Epoch: %d Valid BPC: %.4f" %
-                              (i + 1, valid_perplexity), "green"))
-                sys.stdout.flush()
+                    print(colored("Epoch: %d Learning rate: %.3f" %
+                                  (i + 1, session.run(m.lr)), "green"))
+                    train_perplexity = run_epoch(
+                        session, m, eval_op=m.train_op, verbose=True)
+                    print(colored("Epoch: %d Train BPC: %.4f" %
+                                  (i + 1, train_perplexity), "green"))
+                    valid_perplexity = run_epoch(session, mvalid)
+                    print(colored("Epoch: %d Valid BPC: %.4f" %
+                                  (i + 1, valid_perplexity), "green"))
+                    sys.stdout.flush()
 
-                if i == 180:
-                    config.learning_rate *= 0.1
-
-                if valid_perplexity < previous_val:
-                    print(colored("Storing weights", "blue"))
-                    saver.save(session, FLAGS.save_path + 'model.ckpt')
-                    previous_val = valid_perplexity
-                    counter_val = 0
-                elif config.dataset == 'enwik8':
-                    counter_val += 1
-                    if counter_val == 2:
+                    if i == 180:
                         config.learning_rate *= 0.1
+
+                    if valid_perplexity < previous_val:
+                        print(colored("Storing weights", "blue"))
+                        saver.save(session, os.path.join(
+                            FLAGS.save_path, 'model.ckpt'))
+                        f = open(FLAGS.save_path + 'train-and-valid.txt', 'w')
+                        f.write("Epoch %d\nTrain %f\nValid %f\n" %
+                                (i, train_perplexity, valid_perplexity))
+                        f.close()
+                        previous_val = valid_perplexity
                         counter_val = 0
+                    elif config.dataset == 'enwik8':
+                        counter_val += 1
+                        if counter_val == 2:
+                            config.learning_rate *= 0.1
+                            counter_val = 0
 
             print(colored("Loading best weights", "blue"))
-            saver.restore(session, FLAGS.save_path + 'model.ckpt')
+            saver.restore(session, os.path.join(FLAGS.save_path, 'model.ckpt'))
             test_perplexity = run_epoch(session, mtest)
             print(colored("Test Perplexity: %.4f" % test_perplexity, "green"))
+            f = open(FLAGS.save_path + 'test_2.txt', 'w')
+            f.write("Test %f\n" % (test_perplexity))
+            f.close()
             sys.stdout.flush()
             coord.request_stop()
             coord.join(threads)

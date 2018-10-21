@@ -7,16 +7,205 @@ def get_config(model):
         return ptb_fs_goru_config()
     elif model == 'ptb_fs_eunn':
         return ptb_fs_eunn_config()
-    elif model == 'ptb_rum_single':
-        return ptb_rum_single_config()
-    elif model == 'ptb_rum_double':
-        return ptb_rum_double_config()
     elif model == 'ptb_lstm_single':
         return ptb_lstm_single_config()
+    elif model == 'ptb_rum_single':
+        return ptb_rum_single_config()
+    elif model == 'ptb_rum_single_U':
+        return ptb_rum_single_U_config()
+    elif model == 'ptb_rum_single_tanh':
+        return ptb_rum_single_tanh_config()
+    elif model == 'ptb_rum_single_sigmoid':
+        return ptb_rum_single_sigmoid_config()
+    elif model == 'ptb_rum_single_softsign':
+        return ptb_rum_single_softsign_config()
+    elif model == 'ptb_rum_single_1500':
+        return ptb_rum_single_1500_config()
     elif model == 'ptb':
         return ptb_config()
     else:
         raise ValueError("Invalid model: %s", model)
+
+
+class ptb_lstm_single_config(object):
+    """PTB config."""
+    cell = "lstm"
+    num_steps = 150
+    learning_rate = 0.002
+    T_norm = 1.0
+
+    num_layers = 1
+    init_scale = 0.01
+    max_grad_norm = 1.0
+    cell_size = 1000
+    embed_size = 128
+    max_epoch = 100
+    max_max_epoch = max_epoch
+    keep_prob = 0.65
+    zoneout_h = 0.9
+    zoneout_c = 0.5
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 50
+    use_layer_norm = True
+    use_zoneout = True
+    dataset = 'ptb'
+
+
+class ptb_rum_single_config(object):
+    """PTB config."""
+    cell = "rum"
+    num_steps = 150
+    learning_rate = 0.002
+    T_norm = 1.0
+
+    num_layers = 1
+    init_scale = 0.01
+    max_grad_norm = 1.0
+    cell_size = 1000
+    embed_size = 128
+    max_epoch = 100
+    max_max_epoch = max_epoch
+    keep_prob = 0.65
+    zoneout_h = 0.9
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 50
+    use_layer_norm = True
+    use_zoneout = True
+    activation = "relu"
+    update_gate = True
+    dataset = 'ptb'
+
+
+class ptb_rum_single_U_config(object):
+    """PTB config."""
+    cell = "rum"
+    num_steps = 150
+    learning_rate = 0.002
+    T_norm = 1.0
+
+    num_layers = 1
+    init_scale = 0.01
+    max_grad_norm = 1.0
+    cell_size = 1400
+    embed_size = 128
+    max_epoch = 100
+    max_max_epoch = max_epoch
+    keep_prob = 0.65
+    zoneout_h = 0.9
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 50
+    use_layer_norm = True
+    use_zoneout = True
+    activation = "relu"
+    update_gate = False
+    dataset = 'ptb'
+
+
+class ptb_rum_single_tanh_config(object):
+    """PTB config."""
+    cell = "rum"
+    num_steps = 150
+    learning_rate = 0.002
+    T_norm = None
+
+    num_layers = 1
+    init_scale = 0.01
+    max_grad_norm = 1.0
+    cell_size = 1000
+    embed_size = 128
+    max_epoch = 100
+    max_max_epoch = max_epoch
+    keep_prob = 0.65
+    zoneout_h = 0.9
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 50
+    use_layer_norm = True
+    use_zoneout = True
+    activation = "tanh"
+    update_gate = True
+    dataset = 'ptb'
+
+
+class ptb_rum_single_sigmoid_config(object):
+    """PTB config."""
+    cell = "rum"
+    num_steps = 150
+    learning_rate = 0.002
+    T_norm = None
+
+    num_layers = 1
+    init_scale = 0.01
+    max_grad_norm = 1.0
+    cell_size = 1000
+    embed_size = 128
+    max_epoch = 100
+    max_max_epoch = max_epoch
+    keep_prob = 0.65
+    zoneout_h = 0.9
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 50
+    use_layer_norm = True
+    use_zoneout = True
+    activation = "sigmoid"
+    update_gate = True
+    dataset = 'ptb'
+
+
+class ptb_rum_single_softsign_config(object):
+    """PTB config."""
+    cell = "rum"
+    num_steps = 150
+    learning_rate = 0.002
+    T_norm = None
+
+    num_layers = 1
+    init_scale = 0.01
+    max_grad_norm = 1.0
+    cell_size = 1000
+    embed_size = 128
+    max_epoch = 100
+    max_max_epoch = max_epoch
+    keep_prob = 0.65
+    zoneout_h = 0.9
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 50
+    use_layer_norm = True
+    use_zoneout = True
+    activation = "softsign"
+    update_gate = True
+    dataset = 'ptb'
+
+
+class ptb_rum_single_1500_config(object):
+    """PTB config."""
+    cell = "rum"
+    num_steps = 150
+    learning_rate = 0.002
+    T_norm = 1.0
+
+    num_layers = 1
+    init_scale = 0.01
+    max_grad_norm = 1.0
+    cell_size = 1500
+    embed_size = 128
+    max_epoch = 100
+    max_max_epoch = max_epoch
+    keep_prob = 0.65
+    zoneout_h = 0.9
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 50
+    use_layer_norm = True
+    use_zoneout = True
+    activation = "relu"
+    update_gate = True
+    dataset = 'ptb'
 
 
 class ptb_config(object):
@@ -168,55 +357,6 @@ class ptb_fs_goru_config(object):
     T_norm = 1.0
     use_zoneout = True
     use_layer_norm = True
-    dataset = 'ptb'
-
-
-class ptb_rum_single_config(object):
-    """PTB config."""
-    cell = "rum"
-    num_steps = 30
-    learning_rate = 0.002
-    T_norm = 1.0
-
-    num_layers = 1
-    init_scale = 0.01
-    max_grad_norm = 1.0
-    cell_size = 200
-    embed_size = 128
-    max_epoch = 100
-    max_max_epoch = max_epoch
-    keep_prob = 0.65
-    zoneout_h = 0.9
-    lr_decay = 0.1
-    batch_size = 32
-    vocab_size = 50
-    use_layer_norm = True
-    use_zoneout = True
-    dataset = 'ptb'
-
-
-class ptb_lstm_single_config(object):
-    """PTB config."""
-    cell = "lstm"
-    num_steps = 150
-    learning_rate = 0.002
-    T_norm = 1.0
-
-    num_layers = 1
-    init_scale = 0.01
-    max_grad_norm = 1.0
-    cell_size = 1000
-    embed_size = 128
-    max_epoch = 100
-    max_max_epoch = max_epoch
-    keep_prob = 0.65
-    zoneout_h = 0.9
-    zoneout_c = 0.5
-    lr_decay = 0.1
-    batch_size = 128
-    vocab_size = 50
-    use_layer_norm = True
-    use_zoneout = True
     dataset = 'ptb'
 
 
