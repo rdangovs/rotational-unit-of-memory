@@ -57,7 +57,7 @@ flags.DEFINE_integer(
     "fast_size", None,
     "hidden size of the fast cell")
 flags.DEFINE_float(
-    "eta", None,
+    "eta", 1.0,
     "eta for time normalization")
 
 
@@ -85,6 +85,15 @@ class PTBModel(object):
     """The PTB model."""
 
     def __init__(self, is_training, config, input_):
+        if config.activation == "tanh":
+            act = tf.nn.tanh
+        elif config.activation == "sigmoid":
+            act = tf.nn.sigmoid
+        elif config.activation == "softsign":
+            act = tf.nn.softsign
+        elif config.activation == "relu":
+            act = tf.nn.relu
+
         self._input = input_
 
         # prelim
@@ -112,29 +121,21 @@ class PTBModel(object):
             S_cell = LNLSTM.LN_LSTMCell(S_size, use_zoneout=True, is_training=is_training,
                                         zoneout_keep_h=config.zoneout_h, zoneout_keep_c=config.zoneout_c)
         elif config.cell == "fs-rum":
+
             S_cell = RUM.RUMCell(S_size,
                                  # eta_=config.T_norm,
-                                 eta=FLAGS.eta,
+                                 eta_=FLAGS.eta,
                                  use_zoneout=config.use_zoneout,
                                  use_layer_norm=config.use_layer_norm,
-                                 is_training=is_training)
+                                 is_training=is_training,
+                                 activation=act)
         elif config.cell == "fs-goru":
             with tf.variable_scope("goru"):
                 S_cell = GORU.GORUCell(hidden_size=S_size)
         # test pure RUM/LSTM models (room for experiments)
         if config.cell == "rum":
-            if config.activation == "tanh":
-                act = tf.nn.tanh
-            elif config.activation == "sigmoid":
-                act = tf.nn.sigmoid
-            elif config.activation == "softsign":
-                act = tf.nn.softsign
-            elif config.activation == "relu":
-                act = tf.nn.relu
-
             def rum_cell():
                 return RUM.RUMCell(F_size,
-                                   # eta_=config.T_norm,
                                    eta_=FLAGS.eta,
                                    use_zoneout=config.use_zoneout,
                                    use_layer_norm=config.use_layer_norm,

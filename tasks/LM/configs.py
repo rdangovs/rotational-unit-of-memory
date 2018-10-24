@@ -23,8 +23,37 @@ def get_config(model):
         return ptb_rum_single_1500_config()
     elif model == 'ptb':
         return ptb_config()
+    elif model == 'enwik_rum':
+        return enwik_rum_config()
     else:
         raise ValueError("Invalid model: %s", model)
+
+
+class enwik_rum_config(object):
+    """Enwik8 config."""
+    cell = "fs-rum"
+    init_scale = 0.01
+    learning_rate = 0.001
+    max_grad_norm = 1.0
+    num_layers = 2
+    num_steps = 100
+    cell_size = 1200
+    hyper_size = 2000
+    embed_size = 256
+    max_epoch = 60
+    max_max_epoch = max_epoch
+    keep_prob = 0.75
+    zoneout_h = 0.95
+    zoneout_c = 0.7
+    lr_decay = 0.1
+    batch_size = 128
+    vocab_size = 205
+    fast_layers = 4
+    T_norm = 1.0
+    use_zoneout = True
+    use_layer_norm = True
+    activation = "tanh"
+    dataset = 'enwik8'
 
 
 class ptb_lstm_single_config(object):
