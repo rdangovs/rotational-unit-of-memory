@@ -237,7 +237,7 @@ class Batcher(object):
 
     BATCH_QUEUE_MAX = 100  # max number of batches the batch_queue can hold
 
-    def __init__(self, data_path, vocab, hps, single_pass, is_sd):
+    def __init__(self, data_path, vocab, hps, single_pass, is_sd, is_inf):
         """Initialize the batcher. Start threads that process the data into batches.
 
         Args:
@@ -246,18 +246,18 @@ class Batcher(object):
           hps: hyperparameters
           single_pass: If True, run through the dataset exactly once (useful for when you want to run evaluation on the dev or test set). Otherwise generate random batches indefinitely (useful for training).
           is_sd: are we working with ScienceDaily or not 
+          is_inf: if inference mode or not
         """
         self._data_path = data_path
         self._vocab = vocab
         self._hps = hps
         self._single_pass = single_pass
         self._is_sd = is_sd
+        self._is_inf = is_inf
 
         # Initialize a queue of Batches waiting to be used, and a queue of
         # Examples waiting to be batched
         self._batch_queue = queue.Queue(self.BATCH_QUEUE_MAX)
-        # print(colored(type(self._hps.batch_size),'red'))
-        # input()
         #self._example_queue = queue.Queue(self.BATCH_QUEUE_MAX * self._hps.batch_size.value)
         self._example_queue = queue.Queue(
             self.BATCH_QUEUE_MAX * self._hps.batch_size)
@@ -415,8 +415,13 @@ class Batcher(object):
             try:
                 article_text = e.features.feature['article'].bytes_list.value[
                     0].decode()  # the article text was saved under the key 'article' in the data files
-                abstract_text = e.features.feature['abstract'].bytes_list.value[
-                    0].decode()  # the abstract text was saved under the key 'abstract' in the data files
+                if self._is_inf:
+                    abstract_text = "empty"
+                else:
+                    abstract_text = e.features.feature['abstract'].bytes_list.value[
+                        0].decode()  # the abstract text was saved under the key
+                    # 'abstract' in the data files
+
             except ValueError:
                 tf.logging.error(
                     'Failed to get article or abstract from example')

@@ -15,6 +15,9 @@ from utils import *
 
 FLAGS = tf.flags.FLAGS
 
+# inference or not
+tf.flags.DEFINE_boolean('inference', None, 'inference or not?')
+
 # gpu
 tf.flags.DEFINE_string('gpu', None, 'which gpus?')
 
@@ -425,7 +428,7 @@ def main(unused_argv):
 
     # Create a batcher object that will create minibatches of data
     batcher = Batcher("../../data/" + FLAGS.data_path, vocab, hps,
-                      single_pass=FLAGS.single_pass, is_sd=FLAGS.sd)
+                      single_pass=FLAGS.single_pass, is_sd=FLAGS.sd, is_inf=FLAGS.inference)
 
     tf.set_random_seed(111)  # a seed value for randomness
 
