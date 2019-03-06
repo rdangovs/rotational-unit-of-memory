@@ -1,6 +1,8 @@
 # rotational-unit-of-memory
-
-Rotational Unit of Memory Official Tensorflow Repo
+Rotational Unit of Memory Official Tensorflow Repo. 
+Official website: ...
+If this work is useful to you, please cite ...
+Previous work: https://github.com/jingli9111/RUM-Tensorflow
 
 # Usage
 RUM is used as a drop-in replacement of the standard RNN cells, GRUs, LSTMs, etc. To use it in your research you need two lines of code:
@@ -36,12 +38,16 @@ new_v = rotate(v1, v2, v)
 ```
 You can also play with the `rotation_operator` and `rotation_components` functions in `RUM.py`.
 
-# License
+# Tasks
+Please inspect the content of `tasks/` for training and inference options. A simple example for training on the copying tasks is:
+```
+python tasks/copying/copying_task.py RUM
+```
+The code in `tasks/LM/` is based on [1] and `tasks/summarization/` is based on [2].
 
+# License
 This project is licensed under the terms of the MIT license.
 
 # References
-
 [1] https://github.com/amujika/Fast-Slow-LSTM
-
 [2] https://github.com/abisee/pointer-generator
