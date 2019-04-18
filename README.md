@@ -2,11 +2,13 @@
 
 Rotational Unit of Memory Official Tensorflow Repo. 
 
-Official website: ...
+Official website: http://super-ms.mit.edu/rum.html
 
-If this work is useful to you, please cite ...
+If this work is useful to you, please cite: https://www.mitpressjournals.org/doi/full/10.1162/tacl_a_00258
 
 Previous work: https://github.com/jingli9111/RUM-Tensorflow
+
+Paper will be presented at NAACL-HLT 2019: https://naacl2019.org
 
 
 # Usage
