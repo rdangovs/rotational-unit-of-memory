@@ -11,7 +11,7 @@ from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import tensor_array_ops
 from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.ops.rnn_cell_impl import RNNCell
-from modrelu import modrelu
+from baselineModels.modrelu import modrelu
 from termcolor import colored
 
 
