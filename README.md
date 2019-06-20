@@ -52,6 +52,8 @@ new_v = rotate(v1, v2, v)
 
 You can also play with the `rotation_operator` and `rotation_components` functions in `RUM.py`.
 
+Last tested with: TensorFlow 1.13.1 and Python 3.7.3.
+
 # Tasks
 
 Please inspect the content of `tasks/` for training and inference options. A simple example for training on the copying tasks is:
