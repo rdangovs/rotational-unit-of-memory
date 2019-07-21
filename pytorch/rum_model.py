@@ -95,7 +95,7 @@ class RUMCell(nn.Module):
         c = F.relu(hidden_new + x_emb)
         new_h = u * hidden + (1 - u) * c
         if self.eta_:
-            new_h = F.normalize(new_h, p=2, dim=1, eps=eps)
+            new_h = F.normalize(new_h, p=2, dim=1, eps=eps) * self.eta_
 
         return new_h
 
