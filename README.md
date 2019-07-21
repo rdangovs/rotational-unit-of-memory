@@ -1,6 +1,6 @@
 # rotational-unit-of-memory
 
-Rotational Unit of Memory Official Tensorflow Repo. 
+Rotational Unit of Memory Official Repo. 
 
 Official website: http://super-ms.mit.edu/rum.html
 
