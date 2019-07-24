@@ -53,13 +53,14 @@ def rotate(v1, v2, v):
 
 class RUMCell(nn.Module):
 
-    def __init__(self, input_size, hidden_size, eta_, lambda_, bias):
+    def __init__(self, input_size, hidden_size, eta_, lambda_, bias, eps=1e-12):
         super(RUMCell, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.eta_ = eta_
         self.lambda_ = lambda_
         self.bias = bias
+        self.eps = eps
 
         self.ih = nn.Linear(input_size, 3 * hidden_size, bias=bias)
         self.hh = nn.Linear(hidden_size, 3 * hidden_size, bias=bias)
@@ -95,7 +96,7 @@ class RUMCell(nn.Module):
         c = F.relu(hidden_new + x_emb)
         new_h = u * hidden + (1 - u) * c
         if self.eta_:
-            new_h = F.normalize(new_h, p=2, dim=1, eps=eps) * self.eta_
+            new_h = F.normalize(new_h, p=2, dim=1, eps=self.eps) * self.eta_
 
         return new_h
 

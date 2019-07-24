@@ -119,17 +119,17 @@ def main(
             temp_target_bias = tf.placeholder("float32", [n_hidden])
             temp_embed = tf.placeholder("float32", [10, n_hidden])
 
-        cell = cell = RUMCell(n_hidden,
-                              eta_=norm,
-                              update_gate=update_gate,
-                              lambda_=lambd,
-                              activation=act,
-                              use_layer_norm=layer_norm,
-                              use_zoneout=zoneout,
-                              visualization=visualization_experiment,
-                              temp_target=temp_target if visualization_experiment else None,
-                              temp_target_bias=temp_target_bias if visualization_experiment else None,
-                              temp_embed=temp_embed if visualization_experiment else None)
+        cell = RUMCell(n_hidden,
+                      eta_=norm,
+                      update_gate=update_gate,
+                      lambda_=lambd,
+                      activation=act,
+                      use_layer_norm=layer_norm,
+                      use_zoneout=zoneout,
+                      visualization=visualization_experiment,
+                      temp_target=temp_target if visualization_experiment else None,
+                      temp_target_bias=temp_target_bias if visualization_experiment else None,
+                      temp_embed=temp_embed if visualization_experiment else None)
     elif model == "EUNN":
         if visualization_experiment:
             # placeholder
