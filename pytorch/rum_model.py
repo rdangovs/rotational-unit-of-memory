@@ -53,23 +53,44 @@ def rotate(v1, v2, v):
 
 class RUMCell(nn.Module):
 
-    def __init__(self, input_size, hidden_size, eta_, lambda_, bias, eps=1e-12):
+    def __init__(self,
+                 input_size,
+                 hidden_size,
+                 eta_,
+                 lambda_,
+                 bias,
+                 eps,
+                 activation):
         super(RUMCell, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.eta_ = eta_
         self.lambda_ = lambda_
+
         self.bias = bias
         self.eps = eps
+        if activation == None:
+            activation = 'relu'
+        if activation == 'tanh':
+            self.activation = F.tanh
+        elif activation == 'relu':
+            self.activation = F.relu
 
-        self.ih = nn.Linear(input_size, 3 * hidden_size, bias=bias)
-        self.hh = nn.Linear(hidden_size, 3 * hidden_size, bias=bias)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        std = 1.0 / math.sqrt(self.hidden_size)
-        for w in self.parameters():
-            w.data.uniform_(-std, std)
+        self.r_kernel = nn.Parameter(torch.Tensor(
+            input_size + hidden_size, hidden_size))
+        nn.init.orthogonal_(self.r_kernel)
+        self.r_bias = nn.Parameter(torch.Tensor(hidden_size))
+        nn.init.constant_(self.r_bias, 1.0)
+        self.u_kernel = nn.Parameter(torch.Tensor(
+            input_size + hidden_size, hidden_size))
+        nn.init.orthogonal_(self.u_kernel)
+        self.u_bias = nn.Parameter(torch.Tensor(hidden_size))
+        nn.init.constant_(self.u_bias, 1.0)
+        self.inp_emb_kernel = nn.Parameter(
+            torch.Tensor(input_size, hidden_size))
+        nn.init.xavier_uniform_(self.inp_emb_kernel)
+        self.inp_emb_bias = nn.Parameter(torch.Tensor(hidden_size))
+        nn.init.constant_(self.inp_emb_bias, 0.0)
 
     def forward(self, inputs, hidden, assoc_mem):
 
@@ -82,35 +103,52 @@ class RUMCell(nn.Module):
                 self.hidden_size, device=inputs.device).unsqueeze(0)
 
         # linear mappings
-        projections = self.ih(inputs) + self.hh(hidden)
-        u, r, x_emb = torch.split(projections, self.hidden_size, dim=1)
+        r = torch.matmul(torch.cat((inputs, hidden), 1),
+                         self.r_kernel) + self.r_bias
+        u = torch.matmul(torch.cat((inputs, hidden), 1),
+                         self.u_kernel) + self.u_bias
+        x_emb = torch.matmul(inputs, self.inp_emb_kernel) + self.inp_emb_bias
+
+        # computes the gate
+        u = u.sigmoid()
 
         # rotation and nonlinearity
         if self.lambda_ == 0:
             hidden_new = rotate(x_emb, r, hidden)
-        else:
+        elif self.lambda_ == 1:
             tmp_rotation = rotation_operator(x_emb, r)
-            Rth = torch.matmul(assoc_mem, tmp_rotation)
-            hidden_new = torch.matmul(Rth, hidden.unsqueeze(-1)).squeeze(-1)
+            assoc_mem = torch.matmul(assoc_mem, tmp_rotation)
+            hidden_new = torch.matmul(
+                assoc_mem, hidden.unsqueeze(-1)).squeeze(-1)
+        else:
+            raise
 
         c = F.relu(hidden_new + x_emb)
         new_h = u * hidden + (1 - u) * c
         if self.eta_:
             new_h = F.normalize(new_h, p=2, dim=1, eps=self.eps) * self.eta_
 
-        return new_h
+        return new_h, assoc_mem
 
 
 class RUM(nn.Module):
 
-    def __init__(self, input_size, hidden_size, eta_=None, lambda_=0, bias=True):
+    def __init__(self,
+                 input_size,
+                 hidden_size,
+                 eta_=None,
+                 lambda_=0,
+                 bias=True,
+                 eps=1e-12,
+                 activation=None):
         super().__init__()
-        self.rum_cell = RUMCell(input_size, hidden_size, eta_, lambda_, bias)
+        self.rum_cell = RUMCell(input_size, hidden_size,
+                                eta_, lambda_, bias, eps, activation)
 
     def forward(self, input_, hidden=None, assoc_mem=None):
         outputs = []
         for x in torch.unbind(input_, dim=1):
-            hidden = self.rum_cell(x, hidden, assoc_mem)
+            hidden, assoc_mem = self.rum_cell(x, hidden, assoc_mem)
             outputs.append(hidden)
 
         return torch.stack(outputs, dim=1), hidden

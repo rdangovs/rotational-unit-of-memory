@@ -7,11 +7,12 @@ from rum_model import RUM
 
 import pdb
 import argparse
+import os
 
 parser = argparse.ArgumentParser(
     description='Copying Task')
 
-parser.add_argument('--T', type=int, default=10,
+parser.add_argument('--T', type=int, default=500,
                     help='delay')
 parser.add_argument('--n_input', type=int, default=10,
                     help='number of input classes')
@@ -19,7 +20,7 @@ parser.add_argument('--n_output', type=int, default=9,
                     help='number of output classes')
 parser.add_argument('--n_sequence', type=int, default=10,
                     help='length of sequence')
-parser.add_argument('--n_iter', type=int, default=10000,
+parser.add_argument('--n_iter', type=int, default=1000,
                     help='number of iterations')
 parser.add_argument('--n_batch', type=int, default=32,
                     help='batch size')
@@ -31,6 +32,10 @@ parser.add_argument('--lambda_', type=int, default=0,
                     help='lambda for associative memory')
 parser.add_argument('--rnn_type', type=str, default='RUM',
                     help='type of RNN')
+parser.add_argument('--save_dir', type=str, default='./train_log',
+                    help='save directory')
+parser.add_argument('--exp_name', type=str, default='test',
+                    help='name of experiment')
 
 args = parser.parse_args()
 
@@ -48,6 +53,13 @@ def copying_data(T, n_data, n_sequence):
 
     return x, y
 
+def one_hot(data_x, data_y):
+    input_data = torch.from_numpy(data_x).long().view(-1, 1)
+    input_data = torch.zeros(
+        input_data.size()[0], args.n_input).scatter_(1, input_data, 1)
+    input_data = input_data.view(*data_x.shape, -1).cuda()
+    target_data = torch.from_numpy(data_y).long().cuda()
+    return input_data, target_data
 
 class Net(nn.Module):
     def __init__(self, rnn_type, hidden_size,
@@ -67,35 +79,20 @@ class Net(nn.Module):
 
         return probabilities.view(-1, 9)  # expands across batch and time dims
 
-
-n_test = args.n_batch
-n_train = args.n_iter * args.n_batch
-
-# create data
-train_x, train_y = copying_data(args.T, n_train, args.n_sequence)
-test_x, test_y = copying_data(args.T, n_test, args.n_sequence)
-
-# one_hot
-input_data = torch.from_numpy(train_x).long().view(-1, 1)
-input_data = torch.zeros(
-    input_data.size()[0], args.n_input).scatter_(1, input_data, 1)
-input_data = input_data.view(*train_x.shape, -1).cuda()
-
-target_data = torch.from_numpy(train_y).long().cuda()
-
 # create model
 net = Net(args.rnn_type, args.n_hidden, args.n_input,
           args.n_output, args.eta_, args.lambda_).cuda()
 
 # loss function and optimizer
 criterion = nn.NLLLoss()
-optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+optimizer = torch.optim.RMSprop(net.parameters(), lr=1e-3)
+
 
 # training
+losses = []
 for i in range(args.n_iter):
-    inputs = input_data[args.n_batch*i:args.n_batch*(i+1), :, :]
-    labels = target_data[args.n_batch*i:args.n_batch*(i+1), :]
-
+    batch_x, batch_y = copying_data(args.T, args.n_batch, args.n_sequence)
+    inputs, labels = one_hot(batch_x, batch_y)
     labels = labels.view(-1)
 
     optimizer.zero_grad()
@@ -104,4 +101,21 @@ for i in range(args.n_iter):
     loss.backward()
     optimizer.step()
 
-    print(loss.item())
+    losses.append(loss.item())
+    print("Step %6d, Loss %.4f" % (i, losses[-1]))
+
+print("Running test")
+test_x, test_y = copying_data(args.T, args.n_batch * 10, args.n_sequence)
+inputs, labels = one_hot(test_x, test_y)
+labels = labels.view(-1)
+outputs = net(inputs)
+loss = criterion(outputs, labels)
+test_loss = loss.item()
+print("Test loss %.4f" % (test_loss))
+
+torch.save({
+    'step': args.n_iter,
+    'model': net,
+    'losses': losses,
+    'test_loss': test_loss,
+}, os.path.join(args.save_dir, args.exp_name) + '.tar')
