@@ -1,6 +1,13 @@
 # rotational-unit-of-memory
 
-Rotational Unit of Memory Official Repo. Implementations and test for RUM both in TensorFlow and PyTorch.
+**\*\*\*\*\* New April 2020 \*\*\*\*\***
+
+RUM Units help push the state of the art in summarization of scientific documents on ArXiv and PubMed: https://arxiv.org/pdf/2004.06190.pdf
+
+
+**\*\*\*\*\* Rotational Unit of Memory Official Repo. \*\*\*\*\*** 
+
+Implementations and test for RUM both in TensorFlow and PyTorch.
 
 Official website: http://super-ms.mit.edu/rum.html
 
