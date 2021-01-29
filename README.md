@@ -1,5 +1,9 @@
 # rotational-unit-of-memory
 
+**\*\*\*\*\* New January 2021 \*\*\*\*\***
+
+RUM Units provide long-term semantic information in context for memory networks: https://link.springer.com/article/10.1007/s10489-020-02069-5
+
 **\*\*\*\*\* New April 2020 \*\*\*\*\***
 
 RUM Units help push the state of the art in summarization of scientific documents on ArXiv and PubMed: https://arxiv.org/pdf/2004.06190.pdf
